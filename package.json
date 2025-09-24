@@ -19,6 +19,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "build": "npx -y esbuild src/index.js --bundle --minify --outdir=dist --platform=node --format=esm",
     "test": "node --test"
   },
   "repository": {
