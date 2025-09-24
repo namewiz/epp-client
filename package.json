@@ -1,0 +1,36 @@
+{
+  "name": "epp-client",
+  "version": "0.1.0",
+  "description": "Modern, promise-based Node.js client for interacting with EPP services.",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    }
+  },
+  "files": [
+    "src",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/namewiz/epp-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/namewiz/epp-client/issues"
+  },
+  "author": "Justice Ogbonna <dev@justiceo.com>",
+  "license": "MIT",
+  "dependencies": {
+    "xml2js": "^0.6.2"
+  }
+}
