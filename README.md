@@ -7,6 +7,23 @@ A modern, event-driven Node.js client for interacting with Extensible Provisioni
 a pleasant developer experience while keeping direct control over XML payloads. It exposes a lightweight API that manages TLS
 connectivity, request correlation and consistent message parsing.
 
+## What is EPP?
+
+Extensible Provisioning Protocol (EPP) is the IETF-standard, XML-based protocol used by domain name registrars to provision and
+manage objects at registries, such as domains, hosts (nameservers) and contacts. It runs over TLS, defines a small set of
+core commands (login, check, create, update, delete, renew, transfer) and is extensible, allowing each registry to publish
+their own XML extensions for policy-specific features.
+
+### Registries Using EPP
+
+EPP is the de facto standard across most gTLD and many ccTLD registries. Examples include:
+
+- Verisign — .com, .net
+- Public Interest Registry (PIR) — .org
+- Identity Digital (Donuts/Afilias) — .info, .mobi, and hundreds of new gTLDs
+- NiRA - .ng, .com.ng, .org.ng
+- GoDaddy Registry (formerly Neustar) — .us, .biz, .nyc, .co, and others
+
 ## Features
 
 - Promise-based workflow with automatic transaction tracking.
@@ -19,7 +36,7 @@ connectivity, request correlation and consistent message parsing.
 ## Installation
 
 ```bash
-npm install nominet-epp-client
+npm install epp-client
 ```
 
 > **Note:** This library is published as a pure ECMAScript module. Use `import` or dynamic `import()` when consuming it from
@@ -28,7 +45,7 @@ npm install nominet-epp-client
 ## Quick start
 
 ```js
-import EppClient, { EppClientConfig } from 'nominet-epp-client';
+import EppClient, { EppClientConfig } from 'epp-client';
 
 async function main() {
   const client = new EppClient(new EppClientConfig({
@@ -180,4 +197,4 @@ Type definitions are bundled and loaded automatically when using `import`/`requi
 
 ## License
 
-MIT © 2024
+MIT © 2025
