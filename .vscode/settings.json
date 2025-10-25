@@ -11,7 +11,7 @@
   "files.trimTrailingWhitespace": true,
   "editor.tabSize": 2,
   "editor.insertSpaces": true,
-  "editor.rulers": [80],
+  "editor.rulers": [120],
 
   // Use VS Code's built-in formatters
   "[typescript]": {

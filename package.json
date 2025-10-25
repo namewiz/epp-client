@@ -33,5 +33,8 @@
   "license": "MIT",
   "dependencies": {
     "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "dotenv": "^17.2.3"
   }
 }

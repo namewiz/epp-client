@@ -245,7 +245,42 @@ export class EppClient extends EventEmitter {
 
     const clTRID = transactionId ?? this._nextTransactionId();
     const xml = buildCheckDomainCommand({ name, transactionId: clTRID });
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    const outcome = await this.sendCommand(xml, { transactionId: clTRID, timeout });
+
+    if (outcome instanceof Error) {
+      return outcome;
+    }
+
+    const resData = outcome?.data || {};
+    const chkData = resData['domain:chkData'] || resData.chkData || {};
+    let cd = chkData['domain:cd'] || chkData.cd || null;
+
+    if (Array.isArray(cd)) {
+      cd = cd[0];
+    }
+
+    const nameNode = cd?.['domain:name'] ?? cd?.name ?? null;
+    let availRaw = null;
+
+    if (nameNode && typeof nameNode === 'object') {
+      // xml2js typically stores attributes under $
+      availRaw = nameNode.$?.avail ?? null;
+    }
+
+    const availNum = typeof availRaw === 'string' || typeof availRaw === 'number'
+      ? Number(availRaw)
+      : NaN;
+
+    const availability = availNum === 1 ? 'unregistered' : 'registered';
+
+    const reasonNode = cd?.['domain:reason'] ?? cd?.reason ?? '';
+    const reason = extractMessage(reasonNode) || '';
+
+    return {
+      success: Boolean(outcome.success),
+      availability,
+      reason
+    };
   }
 
   async createDomain({

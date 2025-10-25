@@ -57,6 +57,12 @@ export interface CheckDomainOptions extends SendCommandOptions {
   name: string;
 }
 
+export interface DomainCheckResult {
+  success: boolean;
+  availability: 'registered' | 'unregistered';
+  reason: string;
+}
+
 export interface CreateDomainOptions extends SendCommandOptions {
   name: string;
   period?: number;
@@ -94,7 +100,7 @@ export default class EppClient extends EventEmitter {
   sendCommand(xml: string, options?: SendCommandOptions): Promise<CommandOutcome>;
   login(options: LoginOptions): Promise<CommandOutcome>;
   logout(options?: LogoutOptions): Promise<CommandOutcome>;
-  checkDomain(options: CheckDomainOptions): Promise<CommandOutcome>;
+  checkDomain(options: CheckDomainOptions): Promise<DomainCheckResult | EppCommandError>;
   createDomain(options: CreateDomainOptions): Promise<CommandOutcome>;
   createContact(options: CreateContactOptions): Promise<CommandOutcome>;
 }
