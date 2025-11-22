@@ -367,6 +367,103 @@ export class EppClient extends EventEmitter {
     return this.sendCommand(xml, { transactionId: clTRID, timeout });
   }
 
+  async infoDomain({ name, transactionId, timeout } = {}) {
+    if (!name) {
+      return new Error('The "name" field is required to get domain info.');
+    }
+
+    const clTRID = transactionId ?? this._nextTransactionId();
+    const xml = buildInfoDomainCommand({ name, transactionId: clTRID });
+    const outcome = await this.sendCommand(xml, { transactionId: clTRID, timeout });
+
+    if (outcome instanceof Error) {
+      return outcome;
+    }
+
+    const resData = outcome?.data || {};
+    const infData = resData['domain:infData'] || resData.infData || {};
+
+    const nsNode = infData['domain:ns'] || infData.ns || {};
+    const hostObj = nsNode['domain:hostObj'] || nsNode.hostObj || [];
+    const nameservers = ensureArray(hostObj);
+
+    const registrant = extractMessage(infData['domain:registrant'] || infData.registrant);
+    const roid = extractMessage(infData['domain:roid'] || infData.roid);
+    const clID = extractMessage(infData['domain:clID'] || infData.clID);
+    const crID = extractMessage(infData['domain:crID'] || infData.crID);
+    const crDate = extractMessage(infData['domain:crDate'] || infData.crDate);
+    const upID = extractMessage(infData['domain:upID'] || infData.upID);
+    const upDate = extractMessage(infData['domain:upDate'] || infData.upDate);
+    const exDate = extractMessage(infData['domain:exDate'] || infData.exDate);
+
+    const statusNode = infData['domain:status'] || infData.status || [];
+    const statuses = ensureArray(statusNode).map(s => s?.$?.s || s).filter(Boolean);
+
+    return {
+      success: true,
+      name,
+      roid,
+      status: statuses,
+      registrant,
+      nameservers,
+      clID,
+      crID,
+      crDate,
+      upID,
+      upDate,
+      exDate
+    };
+  }
+
+  async updateDomain({ name, add, remove, change, transactionId, timeout } = {}) {
+    if (!name) {
+      return new Error('The "name" field is required to update a domain.');
+    }
+
+    const clTRID = transactionId ?? this._nextTransactionId();
+    const xml = buildUpdateDomainCommand({
+      name,
+      add,
+      remove,
+      change,
+      transactionId: clTRID
+    });
+
+    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+  }
+
+  async updateNameservers({ name, nameservers, transactionId, timeout } = {}) {
+    if (!name) {
+      return new Error('The "name" field is required to update nameservers.');
+    }
+    if (!Array.isArray(nameservers)) {
+      return new Error('The "nameservers" field must be an array.');
+    }
+
+    const infoResult = await this.infoDomain({ name, transactionId, timeout });
+    if (infoResult instanceof Error) {
+      return infoResult;
+    }
+
+    const currentNameservers = new Set(infoResult.nameservers);
+    const newNameservers = new Set(nameservers);
+
+    const toAdd = nameservers.filter(ns => !currentNameservers.has(ns));
+    const toRemove = infoResult.nameservers.filter(ns => !newNameservers.has(ns));
+
+    if (toAdd.length === 0 && toRemove.length === 0) {
+      return { success: true, message: 'Nameservers are already up to date.' };
+    }
+
+    return this.updateDomain({
+      name,
+      add: toAdd.length ? { nameservers: toAdd } : undefined,
+      remove: toRemove.length ? { nameservers: toRemove } : undefined,
+      transactionId,
+      timeout
+    });
+  }
+
   async _handleData(chunk) {
     this._buffer = Buffer.concat([this._buffer, chunk]);
 
@@ -670,6 +767,83 @@ function buildCreateContactCommand({
   ];
 
   return contactLines.filter(Boolean).join('\n');
+}
+
+function buildInfoDomainCommand({ name, transactionId }) {
+  const lines = [
+    XML_HEADER,
+    '<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">',
+    '  <command>',
+    '    <info>',
+    '      <domain:info xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">',
+    `        <domain:name hosts="all">${escapeXml(name)}</domain:name>`,
+    '      </domain:info>',
+    '    </info>',
+    `    <clTRID>${escapeXml(transactionId)}</clTRID>`,
+    '  </command>',
+    '</epp>'
+  ];
+
+  return lines.join('\n');
+}
+
+function buildUpdateDomainCommand({ name, add = {}, remove = {}, change = {}, transactionId }) {
+  const buildNsList = (list) => {
+    if (!list || !list.length) return [];
+    return list.map(ns => `          <domain:hostObj>${escapeXml(ns)}</domain:hostObj>`);
+  };
+
+  const addNs = buildNsList(add.nameservers);
+  const remNs = buildNsList(remove.nameservers);
+
+  const addBlock = addNs.length ? [
+    '        <domain:add>',
+    '          <domain:ns>',
+    ...addNs,
+    '          </domain:ns>',
+    '        </domain:add>'
+  ] : [];
+
+  const remBlock = remNs.length ? [
+    '        <domain:rem>',
+    '          <domain:ns>',
+    ...remNs,
+    '          </domain:ns>',
+    '        </domain:rem>'
+  ] : [];
+
+  const chgBlock = [];
+  if (change.registrant || change.authInfo) {
+    chgBlock.push('        <domain:chg>');
+    if (change.registrant) {
+      chgBlock.push(`          <domain:registrant>${escapeXml(change.registrant)}</domain:registrant>`);
+    }
+    if (change.authInfo) {
+      chgBlock.push('          <domain:authInfo>');
+      chgBlock.push(`            <domain:pw>${escapeXml(change.authInfo)}</domain:pw>`);
+      chgBlock.push('          </domain:authInfo>');
+    }
+    chgBlock.push('        </domain:chg>');
+  }
+
+  const lines = [
+    XML_HEADER,
+    '<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">',
+    '  <command>',
+    '    <update>',
+    '      <domain:update xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">',
+    `        <domain:name>${escapeXml(name)}</domain:name>`,
+    ...addBlock,
+    ...remBlock,
+    ...chgBlock,
+    '      </domain:update>',
+    '    </update>',
+    `    <clTRID>${escapeXml(transactionId)}</clTRID>`,
+    '  </command>',
+    '</epp>'
+  ];
+
+  return lines.join('\n');
 }
 
 export function normalizeEppResponse(parsed) {

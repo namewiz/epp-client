@@ -1,7 +1,7 @@
-import test from 'node:test';
 import assert from 'node:assert/strict';
+import test from 'node:test';
 
-import EppClient, { EppClientConfig, normalizeEppResponse, escapeXml } from '../src/index.js';
+import EppClient, { EppClientConfig, escapeXml, normalizeEppResponse } from '../src/index.js';
 
 test('EppClientConfig.validate reports missing host', () => {
   const config = new EppClientConfig();
@@ -200,4 +200,108 @@ test('escapeXml safely encodes special characters', () => {
 test('escapeXml returns empty string for nullish values', () => {
   assert.equal(escapeXml(null), '');
   assert.equal(escapeXml(undefined), '');
+});
+
+test('infoDomain returns parsed domain info', async () => {
+  const client = new EppClient({ host: 'example', port: 700 });
+  // Mock sendCommand to return a canned response
+  client.sendCommand = async (xml) => {
+    return {
+      success: true,
+      data: {
+        'domain:infData': {
+          'domain:name': 'example.com',
+          'domain:roid': 'DOM-123',
+          'domain:status': [{ $: { s: 'ok' } }],
+          'domain:registrant': 'jd1234',
+          'domain:ns': {
+            'domain:hostObj': ['ns1.example.com', 'ns2.example.com']
+          },
+          'domain:clID': 'registrar',
+          'domain:crID': 'registrar',
+          'domain:crDate': '2023-01-01T00:00:00Z',
+          'domain:exDate': '2024-01-01T00:00:00Z'
+        }
+      }
+    };
+  };
+
+  const result = await client.infoDomain({ name: 'example.com' });
+
+  assert.equal(result.success, true);
+  assert.equal(result.name, 'example.com');
+  assert.equal(result.roid, 'DOM-123');
+  assert.deepEqual(result.status, ['ok']);
+  assert.equal(result.registrant, 'jd1234');
+  assert.deepEqual(result.nameservers, ['ns1.example.com', 'ns2.example.com']);
+});
+
+test('updateDomain sends correct XML for adding and removing nameservers', async () => {
+  const client = new EppClient({ host: 'example', port: 700 });
+  let sentXml = '';
+  client.sendCommand = async (xml) => {
+    sentXml = xml;
+    return { success: true };
+  };
+
+  await client.updateDomain({
+    name: 'example.com',
+    add: { nameservers: ['ns3.example.com'] },
+    remove: { nameservers: ['ns1.example.com'] }
+  });
+
+  assert.match(sentXml, /<domain:update/);
+  assert.match(sentXml, /<domain:add>\s*<domain:ns>\s*<domain:hostObj>ns3.example.com<\/domain:hostObj>/);
+  assert.match(sentXml, /<domain:rem>\s*<domain:ns>\s*<domain:hostObj>ns1.example.com<\/domain:hostObj>/);
+});
+
+test('updateNameservers calculates add/rem correctly', async () => {
+  const client = new EppClient({ host: 'example', port: 700 });
+
+  // Mock infoDomain
+  client.infoDomain = async () => ({
+    success: true,
+    nameservers: ['ns1.example.com', 'ns2.example.com']
+  });
+
+  // Mock updateDomain
+  let updateArgs = null;
+  client.updateDomain = async (args) => {
+    updateArgs = args;
+    return { success: true };
+  };
+
+  await client.updateNameservers({
+    name: 'example.com',
+    nameservers: ['ns1.example.com', 'ns3.example.com']
+  });
+
+  assert.ok(updateArgs);
+  assert.equal(updateArgs.name, 'example.com');
+  assert.deepEqual(updateArgs.add.nameservers, ['ns3.example.com']);
+  assert.deepEqual(updateArgs.remove.nameservers, ['ns2.example.com']);
+});
+
+test('updateNameservers does nothing if nameservers are unchanged', async () => {
+  const client = new EppClient({ host: 'example', port: 700 });
+
+  client.infoDomain = async () => ({
+    success: true,
+    nameservers: ['ns1.example.com', 'ns2.example.com']
+  });
+
+  let updateCalled = false;
+  client.updateDomain = async () => {
+    updateCalled = true;
+    return { success: true };
+  };
+
+  const result = await client.updateNameservers({
+    name: 'example.com',
+    nameservers: ['ns2.example.com', 'ns1.example.com'] // Order shouldn't matter for set comparison, but here we treat list as set
+  });
+
+  assert.equal(updateCalled, false);
+  assert.equal(result.success, true);
+  assert.match(result.message, /already up to date/);
 });

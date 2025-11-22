@@ -8,7 +8,7 @@ export interface EppClientConfigOptions {
 }
 
 export class EppClientConfig {
-  constructor(options?: EppClientConfigOptions);
+  constructor (options?: EppClientConfigOptions);
 
   host: string;
   port: number;
@@ -51,7 +51,7 @@ export interface LoginOptions extends SendCommandOptions {
   extensions?: string[];
 }
 
-export interface LogoutOptions extends SendCommandOptions {}
+export interface LogoutOptions extends SendCommandOptions { }
 
 export interface CheckDomainOptions extends SendCommandOptions {
   name: string;
@@ -83,10 +83,49 @@ export interface CreateContactOptions extends SendCommandOptions {
   phone?: string;
   email: string;
   authInfo?: string;
+  authInfo?: string;
+}
+
+export interface InfoDomainOptions extends SendCommandOptions {
+  name: string;
+}
+
+export interface DomainInfoResult {
+  success: boolean;
+  name: string;
+  roid: string;
+  status: string[];
+  registrant: string;
+  nameservers: string[];
+  clID: string;
+  crID: string;
+  crDate: string;
+  upID: string;
+  upDate: string;
+  exDate: string;
+}
+
+export interface UpdateDomainOptions extends SendCommandOptions {
+  name: string;
+  add?: {
+    nameservers?: string[];
+  };
+  remove?: {
+    nameservers?: string[];
+  };
+  change?: {
+    registrant?: string;
+    authInfo?: string;
+  };
+}
+
+export interface UpdateNameserversOptions extends SendCommandOptions {
+  name: string;
+  nameservers: string[];
 }
 
 export default class EppClient extends EventEmitter {
-  constructor(options?: EppClientConfig | EppClientConfigOptions);
+  constructor (options?: EppClientConfig | EppClientConfigOptions);
 
   readonly isConnected: boolean;
   readonly config: EppClientConfig;
@@ -103,6 +142,10 @@ export default class EppClient extends EventEmitter {
   checkDomain(options: CheckDomainOptions): Promise<DomainCheckResult | EppCommandError>;
   createDomain(options: CreateDomainOptions): Promise<CommandOutcome>;
   createContact(options: CreateContactOptions): Promise<CommandOutcome>;
+  createContact(options: CreateContactOptions): Promise<CommandOutcome>;
+  infoDomain(options: InfoDomainOptions): Promise<DomainInfoResult | EppCommandError>;
+  updateDomain(options: UpdateDomainOptions): Promise<CommandOutcome>;
+  updateNameservers(options: UpdateNameserversOptions): Promise<CommandOutcome>;
 }
 
 export { EppClient };

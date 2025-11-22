@@ -134,12 +134,15 @@ synchronously.
 - `disconnect()` – gracefully close the underlying socket. Resolves with `null` once closed or an `Error` if a socket problem
   occurs during shutdown.
 - `destroy(error?)` – forcefully close the socket and notify pending callers with the provided error.
-- `sendCommand(xml, options?)` – send raw EPP XML; automatically injects a `clTRID` if missing.
-- `login(options)` – authenticate with the registry.
-- `logout(options?)` – end an authenticated session.
-- `checkDomain(options)` – run a `<domain:check>` command.
-- `createDomain(options)` – create a new domain with optional nameservers and auth info.
-- `createContact(options)` – create a contact object using loc information.
+- `sendCommand(xml, { transactionId, timeout }?)` – send raw EPP XML; automatically injects a `clTRID` if missing.
+- `login({ username, password, services, extensions, transactionId, timeout })` – authenticate with the registry.
+- `logout({ transactionId, timeout }?)` – end an authenticated session.
+- `checkDomain({ name, transactionId, timeout })` – run a `<domain:check>` command.
+- `createDomain({ name, period, registrant, nameservers, authPassword, transactionId, timeout })` – create a new domain.
+- `createContact({ id, name, email, ... })` – create a contact object. See `CreateContactOptions` for full list.
+- `infoDomain({ name, transactionId, timeout })` - retrieve detailed domain information including nameservers and status.
+- `updateDomain({ name, add, remove, change, transactionId, timeout })` - send a raw `<domain:update>` command.
+- `updateNameservers({ name, nameservers, transactionId, timeout })` - helper to update nameservers.
 
 ### CommandResult
 

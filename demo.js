@@ -53,7 +53,7 @@ async function executeRegisterFlow(client) {
     : ['ns1.google.com', 'ns2.google.com'];
 
   const period = Number(process.env.DEMO_DOMAIN_PERIOD || '1') || 1;
-  const authPassword = process.env.DEMO_DOMAIN_AUTH || 'changeme';
+  const authPassword = process.env.DEMO_DOMAIN_AUTH ?? 'TheBest';
 
   const createResult = await client.createDomain({
     name: domainName,
@@ -69,6 +69,68 @@ async function executeRegisterFlow(client) {
   }
 
   console.log('Domain registration succeeded:', domainName);
+  console.log('Domain registration succeeded:', domainName);
+}
+
+async function executeNameserverUpdateTest(client) {
+  const domainName = process.env.TEST_DOMAIN;
+  if (!domainName) {
+    console.log('TEST_DOMAIN env var not set, skipping nameserver update test.');
+    return;
+  }
+
+  console.log(`\n--- Starting Nameserver Update Test for ${domainName} ---`);
+
+  // 1. Get full info before update
+  console.log('Fetching domain info (before update)...');
+  const infoBefore = await client.infoDomain({ name: domainName });
+  if (infoBefore instanceof Error) {
+    console.error('Failed to get domain info:', infoBefore.message);
+    return;
+  }
+  console.log('Current Nameservers:', infoBefore.nameservers);
+
+  // 2. Calculate new nameservers (dns-X -> dns-X+1)
+  const currentNs = infoBefore.nameservers;
+  const newNs = [];
+  currentNs.map(ns => {
+    const match = ns.match(/dns-(\d+)\.test\.com/);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      return `dns-${num + 1}.test.com`;
+    }
+    // Fallback if format doesn't match, just append -new
+    return `${ns}.ng`;
+  });
+
+  // If list is empty, seed it
+  if (newNs.length === 0) {
+    newNs.push('dns1.registrar-servers.com', 'dns2.registrar-servers.com');
+  }
+
+  console.log('Updating nameservers to:', newNs);
+
+  // 3. Update nameservers
+  const updateResult = await client.updateNameservers({
+    name: domainName,
+    nameservers: newNs
+  });
+
+  if (updateResult instanceof Error) {
+    console.error('Failed to update nameservers:', updateResult.message);
+    return;
+  }
+  console.log('Update command sent successfully.');
+
+  // 4. Get full info after update
+  console.log('Fetching domain info (after update)...');
+  const infoAfter = await client.infoDomain({ name: domainName });
+  if (infoAfter instanceof Error) {
+    console.error('Failed to get domain info:', infoAfter.message);
+    return;
+  }
+  console.log('New Nameservers:', infoAfter.nameservers);
+  console.log('--- Nameserver Update Test Completed ---\n');
 }
 
 async function main() {
@@ -84,7 +146,8 @@ async function main() {
   });
 
   client.on('response', (message) => {
-    console.log('Unmatched response received:', message.resultMessage);
+    // Filter out responses that were already handled by the command promise
+    // console.log('Unmatched response received:', message.resultMessage);
   });
 
   const connectError = await client.connect();
@@ -104,6 +167,7 @@ async function main() {
     return;
   }
 
+  // Existing check
   const checkResult = await client.checkDomain({ name: 'justiceo.name.ng' });
   if (checkResult instanceof Error) {
     console.error('Domain check failed:', checkResult.message);
@@ -116,6 +180,9 @@ async function main() {
   } else {
     console.log('Register flow skipped. Pass --run-register-flow to enable.');
   }
+
+  // Run nameserver update test
+  await executeNameserverUpdateTest(client);
 
   const logoutResult = await client.logout();
   if (logoutResult instanceof Error) {
