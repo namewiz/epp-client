@@ -143,6 +143,7 @@ synchronously.
 - `infoDomain({ name, transactionId, timeout })` - retrieve detailed domain information including nameservers and status.
 - `updateDomain({ name, add, remove, change, transactionId, timeout })` - send a raw `<domain:update>` command.
 - `updateNameservers({ name, nameservers, transactionId, timeout })` - helper to update nameservers.
+- `updateAutoRenew({ name, autoRenew, transactionId, timeout })` - helper to enable or disable auto-renewal.
 
 ### CommandResult
 

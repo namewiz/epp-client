@@ -464,6 +464,29 @@ export class EppClient extends EventEmitter {
     });
   }
 
+
+
+  async updateAutoRenew({ name, autoRenew, transactionId, timeout } = {}) {
+    if (!name) {
+      return new Error('The "name" field is required to update auto-renew.');
+    }
+    if (typeof autoRenew !== 'boolean') {
+      return new Error('The "autoRenew" field must be a boolean.');
+    }
+
+    // autoRenew = true  => remove clientRenewProhibited
+    // autoRenew = false => add clientRenewProhibited
+    const status = 'clientRenewProhibited';
+
+    return this.updateDomain({
+      name,
+      add: !autoRenew ? { status: [status] } : undefined,
+      remove: autoRenew ? { status: [status] } : undefined,
+      transactionId,
+      timeout
+    });
+  }
+
   async _handleData(chunk) {
     this._buffer = Buffer.concat([this._buffer, chunk]);
 
@@ -793,22 +816,27 @@ function buildUpdateDomainCommand({ name, add = {}, remove = {}, change = {}, tr
     return list.map(ns => `          <domain:hostObj>${escapeXml(ns)}</domain:hostObj>`);
   };
 
-  const addNs = buildNsList(add.nameservers);
-  const remNs = buildNsList(remove.nameservers);
+  const buildStatusList = (list) => {
+    if (!list || !list.length) return [];
+    return list.map(s => `          <domain:status s="${escapeXml(s)}"/>`);
+  };
 
-  const addBlock = addNs.length ? [
+  const addNs = buildNsList(add.nameservers);
+  const addStatus = buildStatusList(add.status);
+  const remNs = buildNsList(remove.nameservers);
+  const remStatus = buildStatusList(remove.status);
+
+  const addBlock = (addNs.length || addStatus.length) ? [
     '        <domain:add>',
-    '          <domain:ns>',
-    ...addNs,
-    '          </domain:ns>',
+    ...(addNs.length ? ['          <domain:ns>', ...addNs, '          </domain:ns>'] : []),
+    ...addStatus,
     '        </domain:add>'
   ] : [];
 
-  const remBlock = remNs.length ? [
+  const remBlock = (remNs.length || remStatus.length) ? [
     '        <domain:rem>',
-    '          <domain:ns>',
-    ...remNs,
-    '          </domain:ns>',
+    ...(remNs.length ? ['          <domain:ns>', ...remNs, '          </domain:ns>'] : []),
+    ...remStatus,
     '        </domain:rem>'
   ] : [];
 

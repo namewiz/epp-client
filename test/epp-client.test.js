@@ -305,3 +305,39 @@ test('updateNameservers does nothing if nameservers are unchanged', async () => 
   assert.equal(result.success, true);
   assert.match(result.message, /already up to date/);
 });
+
+test('updateAutoRenew sends correct XML for enabling auto-renew', async () => {
+  const client = new EppClient({ host: 'example', port: 700 });
+  let sentXml = '';
+  client.sendCommand = async (xml) => {
+    sentXml = xml;
+    return { success: true };
+  };
+
+  // autoRenew: true -> remove clientRenewProhibited
+  await client.updateAutoRenew({
+    name: 'example.com',
+    autoRenew: true
+  });
+
+  assert.match(sentXml, /<domain:update/);
+  assert.match(sentXml, /<domain:rem>\s*<domain:status s="clientRenewProhibited"\/>/);
+});
+
+test('updateAutoRenew sends correct XML for disabling auto-renew', async () => {
+  const client = new EppClient({ host: 'example', port: 700 });
+  let sentXml = '';
+  client.sendCommand = async (xml) => {
+    sentXml = xml;
+    return { success: true };
+  };
+
+  // autoRenew: false -> add clientRenewProhibited
+  await client.updateAutoRenew({
+    name: 'example.com',
+    autoRenew: false
+  });
+
+  assert.match(sentXml, /<domain:update/);
+  assert.match(sentXml, /<domain:add>\s*<domain:status s="clientRenewProhibited"\/>/);
+});

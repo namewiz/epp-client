@@ -109,9 +109,11 @@ export interface UpdateDomainOptions extends SendCommandOptions {
   name: string;
   add?: {
     nameservers?: string[];
+    status?: string[];
   };
   remove?: {
     nameservers?: string[];
+    status?: string[];
   };
   change?: {
     registrant?: string;
@@ -122,6 +124,11 @@ export interface UpdateDomainOptions extends SendCommandOptions {
 export interface UpdateNameserversOptions extends SendCommandOptions {
   name: string;
   nameservers: string[];
+}
+
+export interface UpdateAutoRenewOptions extends SendCommandOptions {
+  name: string;
+  autoRenew: boolean;
 }
 
 export default class EppClient extends EventEmitter {
@@ -146,6 +153,7 @@ export default class EppClient extends EventEmitter {
   infoDomain(options: InfoDomainOptions): Promise<DomainInfoResult | EppCommandError>;
   updateDomain(options: UpdateDomainOptions): Promise<CommandOutcome>;
   updateNameservers(options: UpdateNameserversOptions): Promise<CommandOutcome>;
+  updateAutoRenew(options: UpdateAutoRenewOptions): Promise<CommandOutcome>;
 }
 
 export { EppClient };
