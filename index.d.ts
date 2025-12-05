@@ -93,16 +93,16 @@ export interface InfoDomainOptions extends SendCommandOptions {
 export interface DomainInfoResult {
   success: boolean;
   name: string;
-  roid: string;
-  status: string[];
-  registrant: string;
+  domainId: string;
+  statuses: string[];
+  registrantId: string;
   nameservers: string[];
-  clID: string;
-  crID: string;
-  crDate: string;
-  upID: string;
-  upDate: string;
-  exDate: string;
+  clientId: string;
+  createdBy: string;
+  createdDate: string;
+  updatedBy: string;
+  updatedDate: string;
+  expiryDate: string;
 }
 
 export interface UpdateDomainOptions extends SendCommandOptions {
@@ -131,6 +131,8 @@ export interface UpdateAutoRenewOptions extends SendCommandOptions {
   autoRenew: boolean;
 }
 
+export interface DumpDomainsOptions extends SendCommandOptions { }
+
 export default class EppClient extends EventEmitter {
   constructor (options?: EppClientConfig | EppClientConfigOptions);
 
@@ -151,6 +153,7 @@ export default class EppClient extends EventEmitter {
   createContact(options: CreateContactOptions): Promise<CommandOutcome>;
   createContact(options: CreateContactOptions): Promise<CommandOutcome>;
   infoDomain(options: InfoDomainOptions): Promise<DomainInfoResult | EppCommandError>;
+  dumpDomains(options?: DumpDomainsOptions): Promise<DomainInfoResult[] | EppCommandError>;
   updateDomain(options: UpdateDomainOptions): Promise<CommandOutcome>;
   updateNameservers(options: UpdateNameserversOptions): Promise<CommandOutcome>;
   updateAutoRenew(options: UpdateAutoRenewOptions): Promise<CommandOutcome>;
