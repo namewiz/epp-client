@@ -1,10 +1,17 @@
 import 'dotenv/config.js';
+import { mkdir, writeFile } from 'node:fs/promises';
 import EppClient, { EppClientConfig } from './src/index.js';
 
 function parseArgs(argv = []) {
   const args = new Set(argv);
+  const domainArg = argv.find((arg) => arg.startsWith('--domains='));
+  const names = domainArg
+    ? domainArg.replace('--domains=', '').split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+
   return {
-    runRegisterFlow: args.has('--run-register-flow')
+    runRegisterFlow: args.has('--run-register-flow'),
+    domains: names
   };
 }
 
@@ -133,8 +140,34 @@ async function executeNameserverUpdateTest(client) {
   console.log('--- Nameserver Update Test Completed ---\n');
 }
 
+async function dumpDomainsToFile(client, names = []) {
+  console.log('\n--- Fetching all domains for current user ---');
+  const domainNames = names.length
+    ? names
+    : (process.env.DUMP_DOMAIN_NAMES || process.env.DUMP_DOMAINS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  const result = await client.dumpDomains({ names: domainNames.length ? domainNames : undefined });
+
+  if (result instanceof Error) {
+    console.error('Failed to dump domains:', result.message);
+    return;
+  }
+
+  const generatedAt = new Date(Date.now());
+  const stamp = formatTimestamp(generatedAt);
+  const file = `data/domains-${stamp}.json`;
+
+  await mkdir('data', { recursive: true });
+  await writeFile(file, JSON.stringify({ generatedAt: generatedAt.toISOString(), domains: result }, null, 2));
+
+  console.log('Saved domain dump to', file);
+}
+
 async function main() {
-  const { runRegisterFlow } = parseArgs(process.argv.slice(2));
+  const { runRegisterFlow, domains } = parseArgs(process.argv.slice(2));
   const client = new EppClient(new EppClientConfig({
     host: process.env.EPP_HOST,
     port: Number(process.env.EPP_PORT) || 700,
@@ -184,6 +217,9 @@ async function main() {
   // Run nameserver update test
   await executeNameserverUpdateTest(client);
 
+  // Dump all domains and persist locally for inspection
+  await dumpDomainsToFile(client, domains);
+
   const logoutResult = await client.logout();
   if (logoutResult instanceof Error) {
     console.error('Logout failed:', logoutResult.message);
@@ -195,3 +231,15 @@ async function main() {
 main().catch((error) => {
   console.error('Unexpected failure:', error);
 });
+
+function formatTimestamp(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+
+  const year = String(date.getFullYear()).slice(-2);
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+
+  return `${year}${month}${day}-${hours}${minutes}`;
+}

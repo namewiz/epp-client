@@ -141,6 +141,7 @@ synchronously.
 - `createDomain({ name, period, registrant, nameservers, authPassword, transactionId, timeout })` – create a new domain.
 - `createContact({ id, name, email, ... })` – create a contact object. See `CreateContactOptions` for full list.
 - `infoDomain({ name, transactionId, timeout })` - retrieve detailed domain information including nameservers and status.
+- `dumpDomains({ names, transactionId, timeout })` - fetch info payloads for domains under the authenticated user. If the registry does not support bulk `<domain:info>` queries, pass an explicit list of domain names via `names` (the demo also accepts `--domains=name1,name2` or `DUMP_DOMAIN_NAMES`/`DUMP_DOMAINS`). The demo script illustrates writing the results to `data/domains-YYMMDD-HHMM.json`.
 - `updateDomain({ name, add, remove, change, transactionId, timeout })` - send a raw `<domain:update>` command.
 - `updateNameservers({ name, nameservers, transactionId, timeout })` - helper to update nameservers.
 - `updateAutoRenew({ name, autoRenew, transactionId, timeout })` - helper to enable or disable auto-renewal.

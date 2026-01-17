@@ -383,36 +383,7 @@ export class EppClient extends EventEmitter {
     const resData = outcome?.data || {};
     const infData = resData['domain:infData'] || resData.infData || {};
 
-    const nsNode = infData['domain:ns'] || infData.ns || {};
-    const hostObj = nsNode['domain:hostObj'] || nsNode.hostObj || [];
-    const nameservers = ensureArray(hostObj);
-
-    const registrant = extractMessage(infData['domain:registrant'] || infData.registrant);
-    const roid = extractMessage(infData['domain:roid'] || infData.roid);
-    const clID = extractMessage(infData['domain:clID'] || infData.clID);
-    const crID = extractMessage(infData['domain:crID'] || infData.crID);
-    const crDate = extractMessage(infData['domain:crDate'] || infData.crDate);
-    const upID = extractMessage(infData['domain:upID'] || infData.upID);
-    const upDate = extractMessage(infData['domain:upDate'] || infData.upDate);
-    const exDate = extractMessage(infData['domain:exDate'] || infData.exDate);
-
-    const statusNode = infData['domain:status'] || infData.status || [];
-    const statuses = ensureArray(statusNode).map(s => s?.$?.s || s).filter(Boolean);
-
-    return {
-      success: true,
-      name,
-      roid,
-      status: statuses,
-      registrant,
-      nameservers,
-      clID,
-      crID,
-      crDate,
-      upID,
-      upDate,
-      exDate
-    };
+    return parseDomainInfo(infData, name);
   }
 
   async updateDomain({ name, add, remove, change, transactionId, timeout } = {}) {
@@ -485,6 +456,42 @@ export class EppClient extends EventEmitter {
       transactionId,
       timeout
     });
+  }
+
+  async dumpDomains({ names, transactionId, timeout } = {}) {
+    if (names && !Array.isArray(names)) {
+      return new Error('The "names" option must be an array when provided.');
+    }
+
+    if (Array.isArray(names) && names.length > 0) {
+      const results = [];
+
+      for (const name of names) {
+        const infoResult = await this.infoDomain({ name, transactionId, timeout });
+
+        if (infoResult instanceof Error) {
+          return infoResult;
+        }
+
+        results.push(infoResult);
+      }
+
+      return results;
+    }
+
+    const clTRID = transactionId ?? this._nextTransactionId();
+    const xml = buildDumpDomainsCommand({ transactionId: clTRID });
+    const outcome = await this.sendCommand(xml, { transactionId: clTRID, timeout });
+
+    if (outcome instanceof Error) {
+      return outcome;
+    }
+
+    const resData = outcome?.data || {};
+    const infDataList = ensureArray(resData['domain:infData'] || resData.infData || []);
+    const domains = infDataList.map((infData) => parseDomainInfo(infData));
+
+    return domains;
   }
 
   async _handleData(chunk) {
@@ -810,6 +817,24 @@ function buildInfoDomainCommand({ name, transactionId }) {
   return lines.join('\n');
 }
 
+function buildDumpDomainsCommand({ transactionId }) {
+  const lines = [
+    XML_HEADER,
+    '<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">',
+    '  <command>',
+    '    <info>',
+    '      <domain:info xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">',
+    '        <domain:all/>',
+    '      </domain:info>',
+    '    </info>',
+    `    <clTRID>${escapeXml(transactionId)}</clTRID>`,
+    '  </command>',
+    '</epp>'
+  ];
+
+  return lines.join('\n');
+}
+
 function buildUpdateDomainCommand({ name, add = {}, remove = {}, change = {}, transactionId }) {
   const buildNsList = (list) => {
     if (!list || !list.length) return [];
@@ -988,6 +1013,41 @@ function normalizeError(value, fallbackMessage = 'Unexpected error.') {
   }
 
   return error;
+}
+
+function parseDomainInfo(infData, fallbackName = '') {
+  const nsNode = infData?.['domain:ns'] || infData?.ns || {};
+  const hostObj = nsNode['domain:hostObj'] || nsNode.hostObj || [];
+  const nameservers = ensureArray(hostObj);
+
+  const registrantId = extractMessage(infData?.['domain:registrant'] || infData?.registrant);
+  const domainId = extractMessage(infData?.['domain:roid'] || infData?.roid);
+  const clientId = extractMessage(infData?.['domain:clID'] || infData?.clID);
+  const createdBy = extractMessage(infData?.['domain:crID'] || infData?.crID);
+  const createdDate = extractMessage(infData?.['domain:crDate'] || infData?.crDate);
+  const updatedBy = extractMessage(infData?.['domain:upID'] || infData?.upID);
+  const updatedDate = extractMessage(infData?.['domain:upDate'] || infData?.upDate);
+  const expiryDate = extractMessage(infData?.['domain:exDate'] || infData?.exDate);
+
+  const statusNode = infData?.['domain:status'] || infData?.status || [];
+  const statuses = ensureArray(statusNode).map(s => s?.$?.s || s).filter(Boolean);
+
+  const nameValue = extractMessage(infData?.['domain:name'] || infData?.name) || fallbackName;
+
+  return {
+    success: true,
+    name: nameValue,
+    domainId,
+    statuses,
+    registrantId,
+    nameservers,
+    clientId,
+    createdBy,
+    createdDate,
+    updatedBy,
+    updatedDate,
+    expiryDate
+  };
 }
 
 export default EppClient;

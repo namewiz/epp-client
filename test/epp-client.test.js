@@ -230,10 +230,87 @@ test('infoDomain returns parsed domain info', async () => {
 
   assert.equal(result.success, true);
   assert.equal(result.name, 'example.com');
-  assert.equal(result.roid, 'DOM-123');
-  assert.deepEqual(result.status, ['ok']);
-  assert.equal(result.registrant, 'jd1234');
+  assert.equal(result.domainId, 'DOM-123');
+  assert.deepEqual(result.statuses, ['ok']);
+  assert.equal(result.registrantId, 'jd1234');
   assert.deepEqual(result.nameservers, ['ns1.example.com', 'ns2.example.com']);
+});
+
+test('dumpDomains returns parsed info for all domains', async () => {
+  const client = new EppClient({ host: 'example', port: 700 });
+  let sentXml = '';
+
+  client.sendCommand = async (xml) => {
+    sentXml = xml;
+    return {
+      success: true,
+      data: {
+        'domain:infData': [
+          {
+            'domain:name': 'one.example',
+            'domain:roid': 'DOM-1',
+            'domain:status': [{ $: { s: 'ok' } }],
+            'domain:registrant': 'jd1234',
+            'domain:ns': { 'domain:hostObj': ['ns1.example.com', 'ns2.example.com'] },
+            'domain:clID': 'registrar',
+            'domain:crID': 'registrar',
+            'domain:crDate': '2023-01-01T00:00:00Z',
+            'domain:exDate': '2024-01-01T00:00:00Z'
+          },
+          {
+            'domain:name': 'two.example',
+            'domain:status': ['clientHold'],
+            'domain:ns': { 'domain:hostObj': [] },
+            'domain:clID': 'registrar',
+            'domain:crID': 'registrar',
+            'domain:crDate': '2023-02-01T00:00:00Z',
+            'domain:exDate': '2024-02-01T00:00:00Z'
+          }
+        ]
+      }
+    };
+  };
+
+  const result = await client.dumpDomains();
+
+  assert.equal(Array.isArray(result), true);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].name, 'one.example');
+  assert.equal(result[0].domainId, 'DOM-1');
+  assert.equal(result[0].registrantId, 'jd1234');
+  assert.deepEqual(result[0].nameservers, ['ns1.example.com', 'ns2.example.com']);
+  assert.deepEqual(result[1].statuses, ['clientHold']);
+  assert.match(sentXml, /<domain:all\/>/);
+});
+
+test('dumpDomains accepts explicit domain names when bulk queries are unsupported', async () => {
+  const client = new EppClient({ host: 'example', port: 700 });
+  const calls = [];
+
+  client.infoDomain = async ({ name }) => {
+    calls.push(name);
+    return {
+      success: true,
+      name,
+      domainId: `ID-${name}`,
+      registrantId: 'jd1234',
+      nameservers: [],
+      statuses: [],
+      clientId: null,
+      createdBy: null,
+      createdDate: null,
+      updatedBy: null,
+      updatedDate: null,
+      expiryDate: null
+    };
+  };
+
+  const result = await client.dumpDomains({ names: ['one.example', 'two.example'] });
+
+  assert.deepEqual(calls, ['one.example', 'two.example']);
+  assert.equal(result.length, 2);
+  assert.equal(result[0].name, 'one.example');
+  assert.equal(result[1].name, 'two.example');
 });
 
 test('updateDomain sends correct XML for adding and removing nameservers', async () => {
