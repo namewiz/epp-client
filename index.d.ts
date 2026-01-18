@@ -83,7 +83,6 @@ export interface CreateContactOptions extends SendCommandOptions {
   phone?: string;
   email: string;
   authInfo?: string;
-  authInfo?: string;
 }
 
 export interface InfoDomainOptions extends SendCommandOptions {
@@ -152,7 +151,6 @@ export default class EppClient extends EventEmitter {
   logout(options?: LogoutOptions): Promise<CommandOutcome>;
   checkDomain(options: CheckDomainOptions): Promise<DomainCheckResult | EppCommandError>;
   createDomain(options: CreateDomainOptions): Promise<CommandOutcome>;
-  createContact(options: CreateContactOptions): Promise<CommandOutcome>;
   createContact(options: CreateContactOptions): Promise<CommandOutcome>;
   infoDomain(options: InfoDomainOptions): Promise<DomainInfoResult | EppCommandError>;
   dumpDomains(options?: DumpDomainsOptions): Promise<DomainInfoResult[] | EppCommandError>;

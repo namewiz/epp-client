@@ -1,10 +1,19 @@
 {
   "name": "epp-client",
   "version": "0.1.3",
-  "description": "Modern, promise-based Node.js client for interacting with EPP services.",
+  "description": "Modern library and CLI for EPP (Extensible Provisioning Protocol) operations",
+  "scripts": {
+    "build": "npx -y esbuild src/index.js --bundle --minify --outdir=dist --platform=node --format=esm",
+    "test": "node  --env-file=.env.test --test test/*.test.js",
+    "test:watch": "node  --env-file=.env.test --test --watch test/*.test.js",
+    "test:coverage": "node  --env-file=.env.test --test --experimental-test-coverage test/*.test.js"
+  },
   "type": "module",
   "main": "src/index.js",
   "types": "index.d.ts",
+  "bin": {
+    "epp-cli": "./src/cli/index.js"
+  },
   "exports": {
     ".": {
       "types": "./index.d.ts",
@@ -18,10 +27,13 @@
     "README.md",
     "LICENSE"
   ],
-  "scripts": {
-    "build": "npx -y esbuild src/index.js --bundle --minify --outdir=dist --platform=node --format=esm",
-    "test": "node --test"
-  },
+  "keywords": [
+    "epp",
+    "domain",
+    "registry",
+    "dns",
+    "cli"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/namewiz/epp-client.git"
@@ -32,9 +44,14 @@
   "author": "Justice Ogbonna <dev@justiceo.com>",
   "license": "MIT",
   "dependencies": {
+    "commander": "^14.0.2",
+    "dotenv": "^17.2.3",
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
-    "dotenv": "^17.2.3"
+    "eslint": "^8.57.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

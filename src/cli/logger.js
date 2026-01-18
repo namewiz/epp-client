@@ -1,0 +1,113 @@
+const COLORS = {
+  reset: "\x1b[0m",
+  bright: "\x1b[1m",
+  dim: "\x1b[2m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  cyan: "\x1b[36m",
+  gray: "\x1b[90m",
+};
+
+const LEVELS = {
+  error: 0,
+  warn: 1,
+  info: 2,
+  success: 3,
+  verbose: 4,
+};
+
+class Logger {
+  constructor () {
+    this.level = LEVELS.info;
+    this.useColors = process.stdout.isTTY;
+  }
+
+  setLevel(level) {
+    if (typeof level === "string" && LEVELS[level] !== undefined) {
+      this.level = LEVELS[level];
+    } else if (typeof level === "number") {
+      this.level = level;
+    }
+  }
+
+  _shouldLog(level) {
+    return LEVELS[level] <= this.level;
+  }
+
+  _colorize(text, color) {
+    if (!this.useColors || !COLORS[color]) {
+      return text;
+    }
+    return `${COLORS[color]}${text}${COLORS.reset}`;
+  }
+
+  _format(level, ...args) {
+    const timestamp = new Date().toISOString().substring(11, 19);
+    const prefix = this._colorize(`[${timestamp}]`, "gray");
+
+    let levelTag;
+    switch (level) {
+      case "error":
+        levelTag = this._colorize("[ERROR]", "red");
+        break;
+      case "warn":
+        levelTag = this._colorize("[WARN]", "yellow");
+        break;
+      case "success":
+        levelTag = this._colorize("[SUCCESS]", "green");
+        break;
+      case "info":
+        levelTag = this._colorize("[INFO]", "blue");
+        break;
+      case "verbose":
+        levelTag = this._colorize("[VERBOSE]", "cyan");
+        break;
+      default:
+        levelTag = `[${level.toUpperCase()}]`;
+    }
+
+    return `${prefix} ${levelTag}`;
+  }
+
+  error(...args) {
+    if (this._shouldLog("error")) {
+      console.error(this._format("error"), ...args);
+    }
+  }
+
+  warn(...args) {
+    if (this._shouldLog("warn")) {
+      console.warn(this._format("warn"), ...args);
+    }
+  }
+
+  info(...args) {
+    if (this._shouldLog("info")) {
+      console.log(this._format("info"), ...args);
+    }
+  }
+
+  success(...args) {
+    if (this._shouldLog("success")) {
+      console.log(this._format("success"), ...args);
+    }
+  }
+
+  verbose(...args) {
+    if (this._shouldLog("verbose")) {
+      console.log(this._format("verbose"), ...args);
+    }
+  }
+
+  raw(...args) {
+    console.log(...args);
+  }
+
+  table(data) {
+    console.table(data);
+  }
+}
+
+export const logger = new Logger();
