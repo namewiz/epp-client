@@ -14,7 +14,7 @@ export class EppClientConfig {
     host = "",
     port = 700,
     rejectUnauthorized = false,
-    defaultTimeout = 10000,
+    defaultTimeout = 60000,
   } = {}) {
     this.host = host ?? process.env.EPP_HOST;
     this.port = port ?? Number(process.env.EPP_PORT);
