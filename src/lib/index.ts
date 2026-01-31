@@ -19,6 +19,8 @@ import {
   LoginOptionsSchema,
   PollAckOptionsSchema,
   RenewDomainOptionsSchema,
+  RestoreDomainOptionsSchema,
+  RestoreReportOptionsSchema,
   TransferDomainOptionsSchema,
   UpdateAutoRenewOptionsSchema,
   UpdateContactOptionsSchema,
@@ -45,6 +47,8 @@ import type {
   BuildLogoutCommandOptions,
   BuildPollCommandOptions,
   BuildRenewDomainCommandOptions,
+  BuildRestoreDomainCommandOptions,
+  BuildRestoreReportCommandOptions,
   BuildTransferDomainCommandOptions,
   BuildUpdateContactCommandOptions,
   BuildUpdateDomainCommandOptions,
@@ -84,11 +88,15 @@ import type {
   QueueInfo,
   RenewDomainOptions,
   RenewDomainResult,
+  RestoreDomainOptions,
+  RestoreDomainResult,
+  RestoreReportOptions,
   SendCommandOptions,
   SettleFunction,
   TlsOptions,
   TransferDomainOptions,
   TransferDomainResult,
+  QueryTransferResult,
   UpdateAutoRenewOptions,
   UpdateContactOptions,
   UpdateDomainOptions,
@@ -104,8 +112,8 @@ export type {
   LogoutOptions, PollAckOptions,
   PollAckResult, PollRequestOptions,
   PollRequestResult, RenewDomainOptions,
-  RenewDomainResult, SendCommandOptions, TransferDomainOptions,
-  TransferDomainResult, UpdateAutoRenewOptions, UpdateContactOptions, UpdateDomainOptions, UpdateHostOptions, UpdateNameserversOptions,
+  RenewDomainResult, RestoreDomainOptions, RestoreDomainResult, RestoreReportOptions, SendCommandOptions, TransferDomainOptions,
+  TransferDomainResult, QueryTransferResult, UpdateAutoRenewOptions, UpdateContactOptions, UpdateDomainOptions, UpdateHostOptions, UpdateNameserversOptions,
   UpdateNameserversResult
 };
 
@@ -720,7 +728,7 @@ export class EppClient extends EventEmitter {
     };
   }
 
-  async queryTransfer(options: TransferDomainOptions): Promise<CommandOutcome> {
+  async queryTransfer(options: TransferDomainOptions): Promise<QueryTransferResult | Error> {
     const validationError = validateSchema(TransferDomainOptionsSchema, options, "Query transfer validation failed");
     if (validationError) return validationError;
 
@@ -732,7 +740,29 @@ export class EppClient extends EventEmitter {
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
+    const outcome = await this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
+
+    if (outcome instanceof Error) {
+      return outcome;
+    }
+
+    const resData = (outcome.data || {}) as Record<string, unknown>;
+    const trnData = (resData["domain:trnData"] || resData.trnData || {}) as Record<string, unknown>;
+
+    return {
+      success: true,
+      name: extractMessage(trnData["domain:name"] || trnData.name) || options.name,
+      status:
+        extractMessage(trnData["domain:trStatus"] || trnData.trStatus) || null,
+      requestingRegistrar:
+        extractMessage(trnData["domain:reID"] || trnData.reID) || null,
+      requestDate:
+        extractMessage(trnData["domain:reDate"] || trnData.reDate) || null,
+      actionRegistrar:
+        extractMessage(trnData["domain:acID"] || trnData.acID) || null,
+      actionDate:
+        extractMessage(trnData["domain:acDate"] || trnData.acDate) || null,
+    };
   }
 
   async approveTransfer(options: TransferDomainOptions): Promise<CommandOutcome> {
@@ -778,6 +808,77 @@ export class EppClient extends EventEmitter {
     });
 
     return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
+  }
+
+  // ========================================
+  // RGP (REGISTRY GRACE PERIOD) COMMANDS
+  // ========================================
+
+  async restoreDomain(options: RestoreDomainOptions): Promise<RestoreDomainResult | Error> {
+    const validationError = validateSchema(RestoreDomainOptionsSchema, options, "Restore domain validation failed");
+    if (validationError) return validationError;
+
+    const clTRID = options.transactionId ?? this._nextTransactionId();
+    const xml = buildRestoreDomainCommand({
+      name: options.name,
+      transactionId: clTRID,
+    });
+
+    const outcome = await this.sendCommand(xml, {
+      transactionId: clTRID,
+      timeout: options.timeout,
+    });
+
+    if (outcome instanceof Error) {
+      return outcome;
+    }
+
+    // Parse RGP extension data from response
+    const extension = (outcome.extension || {}) as Record<string, unknown>;
+    const rgpInfData = (extension["rgp:infData"] || extension.infData || {}) as Record<string, unknown>;
+    const rgpStatusNode = rgpInfData["rgp:rgpStatus"] || rgpInfData.rgpStatus;
+    const rgpStatus = rgpStatusNode
+      ? (rgpStatusNode as { $?: { s?: string } })?.$?.s || extractMessage(rgpStatusNode)
+      : null;
+
+    return {
+      success: true,
+      name: options.name,
+      rgpStatus: rgpStatus || "pendingRestore",
+    };
+  }
+
+  async restoreReport(options: RestoreReportOptions): Promise<RestoreDomainResult | Error> {
+    const validationError = validateSchema(RestoreReportOptionsSchema, options, "Restore report validation failed");
+    if (validationError) return validationError;
+
+    const clTRID = options.transactionId ?? this._nextTransactionId();
+    const xml = buildRestoreReportCommand({
+      name: options.name,
+      preData: options.preData,
+      postData: options.postData,
+      deleteTime: options.deleteTime,
+      restoreTime: options.restoreTime,
+      restoreReason: options.restoreReason,
+      statements: options.statements,
+      other: options.other,
+      transactionId: clTRID,
+    });
+
+    const outcome = await this.sendCommand(xml, {
+      transactionId: clTRID,
+      timeout: options.timeout,
+    });
+
+    if (outcome instanceof Error) {
+      return outcome;
+    }
+
+    return {
+      success: true,
+      name: options.name,
+      rgpStatus: null,
+    };
   }
 
   // ========================================
@@ -1973,6 +2074,93 @@ function buildDeleteHostCommand({
     <clTRID>${escapeXml(transactionId)}</clTRID>
   </command>
 </epp>`;
+}
+
+// ========================================
+// RGP COMMANDS
+// ========================================
+
+function buildRestoreDomainCommand({
+  name,
+  transactionId,
+}: BuildRestoreDomainCommandOptions): string {
+  return `${XML_HEADER}
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <command>
+    <update>
+      <domain:update xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">
+        <domain:name>${escapeXml(name)}</domain:name>
+        <domain:chg/>
+      </domain:update>
+    </update>
+    <extension>
+      <rgp:update xmlns:rgp="urn:ietf:params:xml:ns:rgp-1.0">
+        <rgp:restore op="request"/>
+      </rgp:update>
+    </extension>
+    <clTRID>${escapeXml(transactionId)}</clTRID>
+  </command>
+</epp>`;
+}
+
+function buildRestoreReportCommand({
+  name,
+  preData,
+  postData,
+  deleteTime,
+  restoreTime,
+  restoreReason,
+  statements,
+  other,
+  transactionId,
+}: BuildRestoreReportCommandOptions): string {
+  // Format dates as ISO strings
+  const formatDate = (date: string | Date): string => {
+    if (date instanceof Date) {
+      return date.toISOString();
+    }
+    return date;
+  };
+
+  const statementLines = statements
+    .map((stmt) => `          <rgp:statement>${escapeXml(stmt)}</rgp:statement>`)
+    .join("\n");
+
+  const otherLine = other
+    ? `          <rgp:other>${escapeXml(other)}</rgp:other>`
+    : "";
+
+  const lines = [
+    XML_HEADER,
+    '<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">',
+    "  <command>",
+    "    <update>",
+    '      <domain:update xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">',
+    `        <domain:name>${escapeXml(name)}</domain:name>`,
+    "        <domain:chg/>",
+    "      </domain:update>",
+    "    </update>",
+    "    <extension>",
+    '      <rgp:update xmlns:rgp="urn:ietf:params:xml:ns:rgp-1.0">',
+    '        <rgp:restore op="report">',
+    "          <rgp:report>",
+    `            <rgp:preData>${escapeXml(preData)}</rgp:preData>`,
+    `            <rgp:postData>${escapeXml(postData)}</rgp:postData>`,
+    `            <rgp:delTime>${escapeXml(formatDate(deleteTime))}</rgp:delTime>`,
+    `            <rgp:resTime>${escapeXml(formatDate(restoreTime))}</rgp:resTime>`,
+    `            <rgp:resReason>${escapeXml(restoreReason)}</rgp:resReason>`,
+    statementLines,
+    otherLine,
+    "          </rgp:report>",
+    "        </rgp:restore>",
+    "      </rgp:update>",
+    "    </extension>",
+    `    <clTRID>${escapeXml(transactionId)}</clTRID>`,
+    "  </command>",
+    "</epp>",
+  ];
+
+  return lines.filter(Boolean).join("\n");
 }
 
 // ========================================

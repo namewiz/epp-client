@@ -656,9 +656,12 @@ program
       if (result instanceof Error) throw result;
       return {
         success: result.success,
-        resultCode: result.resultCode,
-        resultMessage: result.resultMessage,
-        data: result.data,
+        name: result.name,
+        status: result.status,
+        requestingRegistrar: result.requestingRegistrar,
+        requestDate: result.requestDate,
+        actionRegistrar: result.actionRegistrar,
+        actionDate: result.actionDate,
       };
     });
   });
@@ -937,5 +940,75 @@ program
       return { success: true, name, message: "Host deleted successfully" };
     });
   });
+
+// restore-domain command (RGP)
+program
+  .command("restore-domain")
+  .alias("restore")
+  .description("Request to restore a domain from the redemption grace period")
+  .argument("<domain>", "Domain name to restore")
+  .action(async (domain: string) => {
+    await withClient(async (client) => {
+      const result = await client.restoreDomain({ name: domain });
+      if (result instanceof Error) throw result;
+      return {
+        success: true,
+        domain: result.name,
+        rgpStatus: result.rgpStatus,
+        message: "Domain restore request submitted successfully",
+      };
+    });
+  });
+
+// restore-report command (RGP)
+program
+  .command("restore-report")
+  .description("Submit a restore report for a domain in pendingRestore status")
+  .argument("<domain>", "Domain name to submit report for")
+  .requiredOption("--pre-data <data>", "Pre-deletion registration data (WHOIS snapshot before delete)")
+  .requiredOption("--post-data <data>", "Post-restoration registration data (WHOIS snapshot after restore)")
+  .requiredOption("--delete-time <datetime>", "Date/time when domain was deleted (ISO 8601 format)")
+  .requiredOption("--restore-time <datetime>", "Date/time when domain was restored (ISO 8601 format)")
+  .requiredOption("--reason <reason>", "Reason for requesting the restoration")
+  .requiredOption("--statements <statements>", "Statements confirming legitimacy (pipe-separated)")
+  .option("--other <info>", "Any other relevant information")
+  .action(
+    async (
+      domain: string,
+      options: {
+        preData: string;
+        postData: string;
+        deleteTime: string;
+        restoreTime: string;
+        reason: string;
+        statements: string;
+        other?: string;
+      }
+    ) => {
+      const statements = options.statements
+        .split("|")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      await withClient(async (client) => {
+        const result = await client.restoreReport({
+          name: domain,
+          preData: options.preData,
+          postData: options.postData,
+          deleteTime: options.deleteTime,
+          restoreTime: options.restoreTime,
+          restoreReason: options.reason,
+          statements,
+          other: options.other,
+        });
+        if (result instanceof Error) throw result;
+        return {
+          success: true,
+          domain: result.name,
+          message: "Restore report submitted successfully",
+        };
+      });
+    }
+  );
 
 program.parse();

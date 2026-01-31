@@ -43,7 +43,7 @@ describe("EppClientConfig", () => {
     });
 
     test("reports invalid port (too low)", () => {
-      const config = new EppClientConfig({ port: 0 });
+      const config = new EppClientConfig({ host: "epp.example.com", port: 0 });
       const result = config.validate();
 
       assert.ok(result instanceof Error);
@@ -51,7 +51,7 @@ describe("EppClientConfig", () => {
     });
 
     test("reports invalid port (too high)", () => {
-      const config = new EppClientConfig({});
+      const config = new EppClientConfig({ host: "epp.example.com", port: 70000 });
       const result = config.validate();
 
       assert.ok(result instanceof Error);
@@ -60,6 +60,7 @@ describe("EppClientConfig", () => {
 
     test("reports invalid timeout (negative)", () => {
       const config = new EppClientConfig({
+        host: "epp.example.com",
         defaultTimeout: -1000,
       });
       const result = config.validate();

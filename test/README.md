@@ -47,6 +47,11 @@ Tests are organized into logical modules matching the EPP command structure:
 - **rejectTransfer**: Reject incoming transfer
 - **cancelTransfer**: Cancel outgoing transfer
 
+### RGP Commands (`rgp.test.js`)
+
+- **restoreDomain**: Request domain restoration from redemption period
+- **restoreReport**: Submit restore report with deletion/restoration details
+
 ### Poll Commands (`poll.test.js`)
 
 - **pollRequest**: Retrieve messages from queue

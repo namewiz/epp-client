@@ -604,6 +604,30 @@ export const TransferDomainResultSchema = z.object({
 
 export type TransferDomainResult = z.infer<typeof TransferDomainResultSchema>;
 
+export const QueryTransferResultSchema = z.object({
+  success: z.boolean()
+    .describe("Whether the query transfer command succeeded"),
+  name: z.string()
+    .describe("Domain name involved in the transfer"),
+  status: z.string()
+    .describe("Current transfer status")
+    .nullable(),
+  requestingRegistrar: z.string()
+    .describe("Registrar requesting the transfer")
+    .nullable(),
+  requestDate: z.string()
+    .describe("Date and time of the transfer request")
+    .nullable(),
+  actionRegistrar: z.string()
+    .describe("Registrar responsible for approving/rejecting the transfer")
+    .nullable(),
+  actionDate: z.string()
+    .describe("Date and time of the transfer action")
+    .nullable(),
+});
+
+export type QueryTransferResult = z.infer<typeof QueryTransferResultSchema>;
+
 export const UpdateNameserversOptionsSchema = SendCommandOptionsSchema.extend({
   name: z.string({ required_error: "Domain name is required", invalid_type_error: "Domain name must be a string" })
     .min(1, { message: "Domain name is required" })
@@ -829,6 +853,63 @@ export const DeleteHostOptionsSchema = SendCommandOptionsSchema.extend({
 export type DeleteHostOptions = z.infer<typeof DeleteHostOptionsSchema>;
 
 // ========================================
+// RGP (Registry Grace Period) Schemas
+// ========================================
+
+export const RestoreDomainOptionsSchema = SendCommandOptionsSchema.extend({
+  name: z.string({ required_error: "Domain name is required", invalid_type_error: "Domain name must be a string" })
+    .min(1, { message: "Domain name is required" })
+    .describe("Domain name to restore from redemption period"),
+});
+
+export type RestoreDomainOptions = z.infer<typeof RestoreDomainOptionsSchema>;
+
+export const RestoreReportOptionsSchema = SendCommandOptionsSchema.extend({
+  name: z.string({ required_error: "Domain name is required", invalid_type_error: "Domain name must be a string" })
+    .min(1, { message: "Domain name is required" })
+    .describe("Domain name for which to submit a restore report"),
+  preData: z.string({ required_error: "Pre-deletion registration data is required", invalid_type_error: "preData must be a string" })
+    .min(1, { message: "Pre-deletion registration data is required" })
+    .describe("Copy of the registration data that existed before the domain was deleted"),
+  postData: z.string({ required_error: "Post-restoration registration data is required", invalid_type_error: "postData must be a string" })
+    .min(1, { message: "Post-restoration registration data is required" })
+    .describe("Copy of the registration data that exists after the domain is restored"),
+  deleteTime: z.union([
+    z.string({ invalid_type_error: "Delete time must be a string" }),
+    z.date({ invalid_type_error: "Delete time must be a Date object" })
+  ], { errorMap: () => ({ message: "Delete time is required" }) })
+    .describe("Date and time when the domain was deleted"),
+  restoreTime: z.union([
+    z.string({ invalid_type_error: "Restore time must be a string" }),
+    z.date({ invalid_type_error: "Restore time must be a Date object" })
+  ], { errorMap: () => ({ message: "Restore time is required" }) })
+    .describe("Date and time when the domain was restored"),
+  restoreReason: z.string({ required_error: "Restore reason is required", invalid_type_error: "Restore reason must be a string" })
+    .min(1, { message: "Restore reason is required" })
+    .describe("Reason for requesting the domain restoration"),
+  statements: z.array(z.string({ invalid_type_error: "Statement must be a string" }), { invalid_type_error: "Statements must be an array" })
+    .min(1, { message: "At least one statement is required" })
+    .describe("Statements confirming the legitimacy of the restore request"),
+  other: z.string({ invalid_type_error: "Other must be a string" })
+    .describe("Any other relevant information")
+    .optional(),
+});
+
+export type RestoreReportOptions = z.infer<typeof RestoreReportOptionsSchema>;
+
+export const RestoreDomainResultSchema = z.object({
+  success: z.boolean()
+    .describe("Whether the restore command succeeded"),
+  name: z.string()
+    .describe("Domain name that was restored"),
+  rgpStatus: z.string()
+    .describe("Current RGP status of the domain (e.g., pendingRestore)")
+    .nullable(),
+});
+
+export type RestoreDomainResult = z.infer<typeof RestoreDomainResultSchema>;
+
+// ========================================
 // Internal Types (not schemas - used internally)
 // ========================================
 
@@ -1042,6 +1123,27 @@ export const BuildDeleteHostCommandOptionsSchema = z.object({
 });
 
 export type BuildDeleteHostCommandOptions = z.infer<typeof BuildDeleteHostCommandOptionsSchema>;
+
+export const BuildRestoreDomainCommandOptionsSchema = z.object({
+  name: z.string(),
+  transactionId: z.string(),
+});
+
+export type BuildRestoreDomainCommandOptions = z.infer<typeof BuildRestoreDomainCommandOptionsSchema>;
+
+export const BuildRestoreReportCommandOptionsSchema = z.object({
+  name: z.string(),
+  preData: z.string(),
+  postData: z.string(),
+  deleteTime: z.union([z.string(), z.date()]),
+  restoreTime: z.union([z.string(), z.date()]),
+  restoreReason: z.string(),
+  statements: z.array(z.string()),
+  other: z.string().optional(),
+  transactionId: z.string(),
+});
+
+export type BuildRestoreReportCommandOptions = z.infer<typeof BuildRestoreReportCommandOptionsSchema>;
 
 // ========================================
 // Validation Helper
