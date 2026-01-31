@@ -1,4 +1,15 @@
-const COLORS = {
+type ColorName =
+  | "reset"
+  | "bright"
+  | "dim"
+  | "red"
+  | "green"
+  | "yellow"
+  | "blue"
+  | "cyan"
+  | "gray";
+
+const COLORS: Record<ColorName, string> = {
   reset: "\x1b[0m",
   bright: "\x1b[1m",
   dim: "\x1b[2m",
@@ -10,7 +21,9 @@ const COLORS = {
   gray: "\x1b[90m",
 };
 
-const LEVELS = {
+type LogLevel = "error" | "warn" | "info" | "success" | "verbose";
+
+const LEVELS: Record<LogLevel, number> = {
   error: 0,
   warn: 1,
   info: 2,
@@ -19,12 +32,10 @@ const LEVELS = {
 };
 
 class Logger {
-  constructor () {
-    this.level = LEVELS.info;
-    this.useColors = process.stdout.isTTY;
-  }
+  private level: number = LEVELS.info;
+  private useColors: boolean = process.stdout.isTTY ?? false;
 
-  setLevel(level) {
+  setLevel(level: LogLevel | number): void {
     if (typeof level === "string" && LEVELS[level] !== undefined) {
       this.level = LEVELS[level];
     } else if (typeof level === "number") {
@@ -32,22 +43,22 @@ class Logger {
     }
   }
 
-  _shouldLog(level) {
+  private _shouldLog(level: LogLevel): boolean {
     return LEVELS[level] <= this.level;
   }
 
-  _colorize(text, color) {
+  private _colorize(text: string, color: ColorName): string {
     if (!this.useColors || !COLORS[color]) {
       return text;
     }
     return `${COLORS[color]}${text}${COLORS.reset}`;
   }
 
-  _format(level, ...args) {
+  private _format(level: LogLevel): string {
     const timestamp = new Date().toISOString().substring(11, 19);
     const prefix = this._colorize(`[${timestamp}]`, "gray");
 
-    let levelTag;
+    let levelTag: string;
     switch (level) {
       case "error":
         levelTag = this._colorize("[ERROR]", "red");
@@ -65,47 +76,47 @@ class Logger {
         levelTag = this._colorize("[VERBOSE]", "cyan");
         break;
       default:
-        levelTag = `[${level.toUpperCase()}]`;
+        levelTag = `[${(level as string).toUpperCase()}]`;
     }
 
     return `${prefix} ${levelTag}`;
   }
 
-  error(...args) {
+  error(...args: unknown[]): void {
     if (this._shouldLog("error")) {
       console.error(this._format("error"), ...args);
     }
   }
 
-  warn(...args) {
+  warn(...args: unknown[]): void {
     if (this._shouldLog("warn")) {
       console.warn(this._format("warn"), ...args);
     }
   }
 
-  info(...args) {
+  info(...args: unknown[]): void {
     if (this._shouldLog("info")) {
       console.log(this._format("info"), ...args);
     }
   }
 
-  success(...args) {
+  success(...args: unknown[]): void {
     if (this._shouldLog("success")) {
       console.log(this._format("success"), ...args);
     }
   }
 
-  verbose(...args) {
+  verbose(...args: unknown[]): void {
     if (this._shouldLog("verbose")) {
       console.log(this._format("verbose"), ...args);
     }
   }
 
-  raw(...args) {
+  raw(...args: unknown[]): void {
     console.log(...args);
   }
 
-  table(data) {
+  table(data: unknown): void {
     console.table(data);
   }
 }

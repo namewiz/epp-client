@@ -5,7 +5,7 @@ import {
   EppClientConfig,
   escapeXml,
   normalizeEppResponse,
-} from "../src/index.js";
+} from "../dist/index.js";
 
 describe("EppClientConfig", () => {
   describe("constructor", () => {
@@ -15,7 +15,7 @@ describe("EppClientConfig", () => {
       assert.equal(config.host, "");
       assert.equal(config.port, 700);
       assert.equal(config.rejectUnauthorized, false);
-      assert.equal(config.defaultTimeout, 10000);
+      assert.equal(config.defaultTimeout, 60000);
     });
 
     test("accepts custom configuration", () => {

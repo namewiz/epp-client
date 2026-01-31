@@ -1,31 +1,30 @@
 {
   "name": "epp-client",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Modern library and CLI for EPP (Extensible Provisioning Protocol) operations",
   "scripts": {
-    "build": "npx -y esbuild src/index.js --bundle --minify --outdir=dist --platform=node --format=esm",
-    "test": "node  --env-file=.env.test --test test/*.test.js",
-    "test:watch": "node  --env-file=.env.test --test --watch test/*.test.js",
-    "test:coverage": "node  --env-file=.env.test --test --experimental-test-coverage test/*.test.js"
+    "build": "tsc",
+    "build:bundle": "esbuild dist/index.js --bundle --minify --outfile=dist/bundle.js --platform=node --format=esm",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --env-file=.env.test --test test/*.test.js",
+    "test:watch": "node --env-file=.env.test --test --watch test/*.test.js",
+    "test:coverage": "npm run build && node --env-file=.env.test --test --experimental-test-coverage test/*.test.js"
   },
   "type": "module",
-  "main": "src/index.js",
-  "types": "index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
-    "epp-cli": "./src/cli/index.js"
+    "epp-cli": "./dist/cli/index.js"
   },
   "exports": {
     ".": {
-      "types": "./index.d.ts",
-      "import": "./src/index.js",
-      "default": "./src/index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "files": [
-    "src",
-    "index.d.ts",
-    "README.md",
-    "LICENSE"
+    "dist"
   ],
   "keywords": [
     "epp",
@@ -46,12 +45,13 @@
   "dependencies": {
     "commander": "^14.0.2",
     "dotenv": "^17.2.3",
-    "xml2js": "^0.6.2"
+    "xml2js": "^0.6.2",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
-    "eslint": "^8.57.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "@types/node": "^25.0.10",
+    "@types/xml2js": "^0.4.14",
+    "eslint": "^8.57.0",
+    "typescript": "^5.9.3"
   }
 }

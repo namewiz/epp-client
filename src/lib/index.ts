@@ -1,6 +1,113 @@
 import { EventEmitter } from "node:events";
-import { connect as tlsConnect } from "node:tls";
+import { connect as tlsConnect, TLSSocket } from "node:tls";
 import { parseStringPromise } from "xml2js";
+
+import {
+  CheckContactOptionsSchema,
+  CheckDomainOptionsSchema,
+  CheckHostOptionsSchema,
+  CreateContactOptionsSchema,
+  CreateDomainOptionsSchema,
+  CreateHostOptionsSchema,
+  DeleteContactOptionsSchema,
+  DeleteDomainOptionsSchema,
+  DeleteHostOptionsSchema,
+  InfoContactOptionsSchema,
+  InfoDomainOptionsSchema,
+  InfoHostOptionsSchema,
+  // Validation schemas
+  LoginOptionsSchema,
+  PollAckOptionsSchema,
+  RenewDomainOptionsSchema,
+  TransferDomainOptionsSchema,
+  UpdateAutoRenewOptionsSchema,
+  UpdateContactOptionsSchema,
+  UpdateDomainOptionsSchema,
+  UpdateHostOptionsSchema,
+  UpdateNameserversOptionsSchema,
+  validateSchema,
+} from "./types.js";
+
+import type {
+  BuildCheckContactCommandOptions,
+  BuildCheckDomainCommandOptions,
+  BuildCheckHostCommandOptions,
+  BuildCreateContactCommandOptions,
+  BuildCreateDomainCommandOptions,
+  BuildCreateHostCommandOptions,
+  BuildDeleteContactCommandOptions,
+  BuildDeleteDomainCommandOptions,
+  BuildDeleteHostCommandOptions,
+  BuildInfoContactCommandOptions,
+  BuildInfoDomainCommandOptions,
+  BuildInfoHostCommandOptions,
+  BuildLoginCommandOptions,
+  BuildLogoutCommandOptions,
+  BuildPollCommandOptions,
+  BuildRenewDomainCommandOptions,
+  BuildTransferDomainCommandOptions,
+  BuildUpdateContactCommandOptions,
+  BuildUpdateDomainCommandOptions,
+  BuildUpdateHostCommandOptions,
+  CheckContactOptions,
+  CheckDomainOptions,
+  CheckHostOptions,
+  CommandOutcome,
+  CommandResult,
+  ContactCheckResult,
+  ContactInfoResult,
+  CreateContactOptions,
+  CreateDomainOptions,
+  CreateHostOptions,
+  DeleteContactOptions,
+  DeleteDomainOptions,
+  DeleteHostOptions,
+  DomainCheckResult,
+  DomainContact,
+  DomainInfoResult,
+  EppClientConfigOptions,
+  EppXmlResponse,
+  HelloOptions,
+  HostAddress,
+  HostCheckResult,
+  HostInfoResult,
+  InfoContactOptions,
+  InfoDomainOptions,
+  InfoHostOptions,
+  LoginOptions,
+  LogoutOptions,
+  PollAckOptions,
+  PollAckResult,
+  PollRequestOptions,
+  PollRequestResult,
+  PreparedCommand,
+  QueueInfo,
+  RenewDomainOptions,
+  RenewDomainResult,
+  SendCommandOptions,
+  SettleFunction,
+  TlsOptions,
+  TransferDomainOptions,
+  TransferDomainResult,
+  UpdateAutoRenewOptions,
+  UpdateContactOptions,
+  UpdateDomainOptions,
+  UpdateHostOptions,
+  UpdateNameserversOptions,
+  UpdateNameserversResult,
+  XmlNode
+} from "./types.js";
+
+// Re-export types
+export type {
+  CheckContactOptions, CheckDomainOptions, CheckHostOptions, CommandOutcome, CommandResult, ContactCheckResult, ContactInfoResult, CreateContactOptions, CreateDomainOptions, CreateHostOptions, DeleteContactOptions, DeleteDomainOptions, DeleteHostOptions, DomainCheckResult, DomainContact, DomainInfoResult, EppClientConfigOptions, HelloOptions, HostAddress, HostCheckResult, HostInfoResult, InfoContactOptions, InfoDomainOptions, InfoHostOptions, LoginOptions,
+  LogoutOptions, PollAckOptions,
+  PollAckResult, PollRequestOptions,
+  PollRequestResult, RenewDomainOptions,
+  RenewDomainResult, SendCommandOptions, TransferDomainOptions,
+  TransferDomainResult, UpdateAutoRenewOptions, UpdateContactOptions, UpdateDomainOptions, UpdateHostOptions, UpdateNameserversOptions,
+  UpdateNameserversResult
+};
 
 const XML_HEADER = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>';
 const DEFAULT_SERVICES = [
@@ -10,49 +117,53 @@ const DEFAULT_SERVICES = [
 ];
 
 export class EppClientConfig {
-  constructor ({
+  host: string;
+  port: number;
+  rejectUnauthorized: boolean;
+  defaultTimeout: number;
+
+  constructor({
     host = "",
     port = 700,
     rejectUnauthorized = false,
     defaultTimeout = 60000,
-  } = {}) {
-    this.host = host ?? process.env.EPP_HOST;
-    this.port = port ?? Number(process.env.EPP_PORT);
+  }: EppClientConfigOptions = {}) {
+    this.host = host ?? process.env.EPP_HOST ?? "";
+    this.port = port ?? (Number(process.env.EPP_PORT) || 700);
     this.rejectUnauthorized = rejectUnauthorized;
     this.defaultTimeout = defaultTimeout;
   }
 
-  clone(overrides = {}) {
+  clone(overrides: Partial<EppClientConfigOptions> = {}): EppClientConfig {
     return new EppClientConfig({
       host: overrides.host ?? this.host,
       port: overrides.port ?? this.port,
-      rejectUnauthorized:
-        overrides.rejectUnauthorized ?? this.rejectUnauthorized,
+      rejectUnauthorized: overrides.rejectUnauthorized ?? this.rejectUnauthorized,
       defaultTimeout: overrides.defaultTimeout ?? this.defaultTimeout,
     });
   }
 
-  validate() {
+  validate(): Error | null {
     if (!this.host) {
       return new Error('The "host" option is required.');
     }
 
     if (!Number.isInteger(this.port) || this.port <= 0 || this.port > 65535) {
       return new Error(
-        'The "port" option must be an integer between 1 and 65535.',
+        'The "port" option must be an integer between 1 and 65535.'
       );
     }
 
     if (!Number.isInteger(this.defaultTimeout) || this.defaultTimeout < 0) {
       return new Error(
-        'The "defaultTimeout" option must be a non-negative integer.',
+        'The "defaultTimeout" option must be a non-negative integer.'
       );
     }
 
     return null;
   }
 
-  toTlsOptions() {
+  toTlsOptions(): TlsOptions {
     return {
       host: this.host,
       port: this.port,
@@ -62,46 +173,52 @@ export class EppClientConfig {
 }
 
 export class EppClient extends EventEmitter {
-  constructor (options = {}) {
+  private _config: EppClientConfig;
+  private _socket: TLSSocket | null = null;
+  private _buffer: Buffer = Buffer.alloc(0);
+  private _pending: Map<string, SettleFunction> = new Map();
+  private _connected: boolean = false;
+  private _transactionIdCounter: number = 0;
+
+  private readonly _onData: (chunk: Buffer) => void;
+  private readonly _onClose: (error?: Error) => void;
+  private readonly _onSocketError: (error: Error) => void;
+
+  constructor(options: EppClientConfig | EppClientConfigOptions = {}) {
     super();
 
     this._config =
       options instanceof EppClientConfig
         ? options
         : new EppClientConfig(options);
-    this._socket = null;
-    this._buffer = Buffer.alloc(0);
-    this._pending = new Map();
-    this._connected = false;
-    this._transactionIdCounter = 0;
 
-    this._onData = (chunk) => {
+    this._onData = (chunk: Buffer): void => {
       void this._handleData(chunk);
     };
 
-    this._onClose = (error) => {
+    this._onClose = (error?: Error): void => {
       this._handleClose(error);
     };
 
-    this._onSocketError = (error) => {
+    this._onSocketError = (error: Error): void => {
       this._handleSocketError(error);
     };
   }
 
-  get isConnected() {
+  get isConnected(): boolean {
     return this._connected;
   }
 
-  get config() {
+  get config(): EppClientConfig {
     return this._config;
   }
 
-  configure(overrides = {}) {
+  configure(overrides: Partial<EppClientConfigOptions> = {}): EppClientConfig {
     this._config = this._config.clone(overrides);
     return this._config;
   }
 
-  async connect() {
+  async connect(): Promise<Error | null> {
     const validationError = this._config.validate();
 
     if (validationError) {
@@ -115,13 +232,13 @@ export class EppClient extends EventEmitter {
     return new Promise((resolve) => {
       const socket = tlsConnect(this._config.toTlsOptions());
 
-      const handleError = (error) => {
+      const handleError = (error: Error): void => {
         cleanup();
         socket.destroy();
         resolve(normalizeError(error, "Failed to connect to the EPP server."));
       };
 
-      const handleConnect = () => {
+      const handleConnect = (): void => {
         cleanup();
         this._socket = socket;
         this._connected = true;
@@ -135,7 +252,7 @@ export class EppClient extends EventEmitter {
         resolve(null);
       };
 
-      const cleanup = () => {
+      const cleanup = (): void => {
         socket.removeListener("secureConnect", handleConnect);
         socket.removeListener("error", handleError);
       };
@@ -145,26 +262,26 @@ export class EppClient extends EventEmitter {
     });
   }
 
-  async disconnect() {
+  async disconnect(): Promise<Error | null> {
     if (!this._socket) {
       return null;
     }
 
     return new Promise((resolve) => {
-      const socket = this._socket;
+      const socket = this._socket!;
 
-      const handleClose = () => {
+      const handleClose = (): void => {
         socket.removeListener("error", handleError);
         resolve(null);
       };
 
-      const handleError = (error) => {
+      const handleError = (error: Error): void => {
         socket.removeListener("close", handleClose);
         resolve(
           normalizeError(
             error,
-            "Socket error while closing the EPP connection.",
-          ),
+            "Socket error while closing the EPP connection."
+          )
         );
       };
 
@@ -174,7 +291,7 @@ export class EppClient extends EventEmitter {
     });
   }
 
-  destroy(error) {
+  destroy(error?: Error): void {
     if (this._socket) {
       this._socket.destroy(error);
     }
@@ -182,7 +299,10 @@ export class EppClient extends EventEmitter {
     this._handleClose(error);
   }
 
-  async sendCommand(xml, { transactionId, timeout } = {}) {
+  async sendCommand(
+    xml: string,
+    { transactionId, timeout }: SendCommandOptions = {}
+  ): Promise<CommandOutcome> {
     const connectivityError = this._ensureConnected();
 
     if (connectivityError) {
@@ -207,7 +327,7 @@ export class EppClient extends EventEmitter {
     }
 
     return new Promise((resolve) => {
-      const settle = (outcome) => {
+      const settle = (outcome: CommandResult | Error): void => {
         if (timer) {
           clearTimeout(timer);
         }
@@ -218,9 +338,9 @@ export class EppClient extends EventEmitter {
       const timer =
         timeoutMs > 0
           ? setTimeout(() => {
-            this._pending.delete(prepared.transactionId);
-            settle(new Error(`EPP command timed out after ${timeoutMs}ms.`));
-          }, timeoutMs)
+              this._pending.delete(prepared.transactionId);
+              settle(new Error(`EPP command timed out after ${timeoutMs}ms.`));
+            }, timeoutMs)
           : null;
 
       this._pending.set(prepared.transactionId, settle);
@@ -244,25 +364,24 @@ export class EppClient extends EventEmitter {
     });
   }
 
-  async hello({ transactionId, timeout } = {}) {
+  async hello({ transactionId, timeout }: HelloOptions = {}): Promise<CommandOutcome> {
     const clTRID = transactionId ?? this._nextTransactionId();
     const xml = buildHelloCommand();
     return this.sendCommand(xml, { transactionId: clTRID, timeout });
   }
 
-  async login({
-    username,
-    password,
-    services = DEFAULT_SERVICES,
-    extensions = [],
-    transactionId,
-    timeout,
-  } = {}) {
-    if (!username || !password) {
-      return new Error(
-        'Both "username" and "password" are required for login.',
-      );
-    }
+  async login(options: LoginOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(LoginOptionsSchema, options, "Login validation failed");
+    if (validationError) return validationError;
+
+    const {
+      username,
+      password,
+      services = DEFAULT_SERVICES,
+      extensions = [],
+      transactionId,
+      timeout,
+    } = options;
 
     const clTRID = transactionId ?? this._nextTransactionId();
     const xml = buildLoginCommand({
@@ -275,7 +394,7 @@ export class EppClient extends EventEmitter {
     return this.sendCommand(xml, { transactionId: clTRID, timeout });
   }
 
-  async logout({ transactionId, timeout } = {}) {
+  async logout({ transactionId, timeout }: LogoutOptions = {}): Promise<CommandOutcome> {
     const clTRID = transactionId ?? this._nextTransactionId();
     const xml = buildLogoutCommand({ transactionId: clTRID });
     return this.sendCommand(xml, { transactionId: clTRID, timeout });
@@ -285,11 +404,11 @@ export class EppClient extends EventEmitter {
   // CONTACT COMMANDS
   // ========================================
 
-  async checkContact({ id, transactionId, timeout } = {}) {
-    if (!id) {
-      return new Error('The "id" field is required to check a contact.');
-    }
+  async checkContact(options: CheckContactOptions): Promise<ContactCheckResult | ContactCheckResult[] | Error> {
+    const validationError = validateSchema(CheckContactOptionsSchema, options, "Check contact validation failed");
+    if (validationError) return validationError;
 
+    const { id, transactionId, timeout } = options;
     const clTRID = transactionId ?? this._nextTransactionId();
     const ids = Array.isArray(id) ? id : [id];
     const xml = buildCheckContactCommand({ ids, transactionId: clTRID });
@@ -302,15 +421,15 @@ export class EppClient extends EventEmitter {
       return outcome;
     }
 
-    const resData = outcome?.data || {};
-    const chkData = resData["contact:chkData"] || resData.chkData || {};
-    const cd = ensureArray(chkData["contact:cd"] || chkData.cd || []);
+    const resData = (outcome.data || {}) as Record<string, unknown>;
+    const chkData = (resData["contact:chkData"] || resData.chkData || {}) as Record<string, unknown>;
+    const cd = ensureArray(chkData["contact:cd"] || chkData.cd || []) as XmlNode[];
 
-    const results = cd.map((item) => {
+    const results: ContactCheckResult[] = cd.map((item) => {
       const idNode = item["contact:id"] || item.id || {};
       const contactId =
-        typeof idNode === "string" ? idNode : idNode._ || idNode;
-      const availRaw = idNode.$?.avail ?? null;
+        typeof idNode === "string" ? idNode : (idNode as XmlNode)._ || idNode;
+      const availRaw = (idNode as XmlNode)?.$?.avail ?? null;
       const availNum =
         typeof availRaw === "string" || typeof availRaw === "number"
           ? Number(availRaw)
@@ -318,51 +437,34 @@ export class EppClient extends EventEmitter {
       const available = availNum === 1;
 
       return {
-        id: contactId,
+        id: String(contactId),
         available,
-        reason: item["contact:reason"] || item.reason || null,
+        reason: (item["contact:reason"] as string) || (item.reason as string) || null,
       };
     });
 
-    return Array.isArray(id) ? results : results[0];
+    return Array.isArray(id) ? results : results[0]!;
   }
 
-  async createContact({
-    id,
-    name,
-    organisation,
-    addressLines = [],
-    city,
-    state,
-    postcode,
-    country,
-    phone,
-    email,
-    authInfo = "changeme",
-    transactionId,
-    timeout,
-  } = {}) {
-    if (!id) {
-      return new Error('The "id" field is required to create a contact.');
-    }
+  async createContact(options: CreateContactOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(CreateContactOptionsSchema, options, "Create contact validation failed");
+    if (validationError) return validationError;
 
-    if (!name) {
-      return new Error('The "name" field is required to create a contact.');
-    }
-
-    if (!city) {
-      return new Error('The "city" field is required to create a contact.');
-    }
-
-    if (!country) {
-      return new Error('The "country" field is required to create a contact.');
-    }
-
-    if (!email) {
-      return new Error('The "email" field is required to create a contact.');
-    }
-
-    // todo: add phone and street as required.
+    const {
+      id,
+      name,
+      organisation,
+      addressLines = [],
+      city,
+      state,
+      postcode,
+      country,
+      phone,
+      email,
+      authInfo = "changeme",
+      transactionId,
+      timeout,
+    } = options;
 
     const clTRID = transactionId ?? this._nextTransactionId();
     const xml = buildCreateContactCommand({
@@ -383,92 +485,81 @@ export class EppClient extends EventEmitter {
     return this.sendCommand(xml, { transactionId: clTRID, timeout });
   }
 
-  async infoContact({ id, transactionId, timeout } = {}) {
-    if (!id) {
-      return new Error('The "id" field is required to get contact info.');
-    }
+  async infoContact(options: InfoContactOptions): Promise<ContactInfoResult | Error> {
+    const validationError = validateSchema(InfoContactOptionsSchema, options, "Info contact validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
-    const xml = buildInfoContactCommand({ id, transactionId: clTRID });
+    const clTRID = options.transactionId ?? this._nextTransactionId();
+    const xml = buildInfoContactCommand({ id: options.id, transactionId: clTRID });
     const outcome = await this.sendCommand(xml, {
       transactionId: clTRID,
-      timeout,
+      timeout: options.timeout,
     });
 
     if (outcome instanceof Error) {
       return outcome;
     }
 
-    const resData = outcome?.data || {};
+    const resData = (outcome.data || {}) as Record<string, unknown>;
     const infData = resData["contact:infData"] || resData.infData || {};
 
-    return parseContactInfo(infData, id);
+    return parseContactInfo(infData as Record<string, unknown>, options.id);
   }
 
-  async updateContact({
-    id,
-    add,
-    remove,
-    change,
-    transactionId,
-    timeout,
-  } = {}) {
-    if (!id) {
-      return new Error('The "id" field is required to update a contact.');
-    }
+  async updateContact(options: UpdateContactOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(UpdateContactOptionsSchema, options, "Update contact validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildUpdateContactCommand({
-      id,
-      add,
-      remove,
-      change,
+      id: options.id,
+      add: options.add,
+      remove: options.remove,
+      change: options.change,
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
-  async deleteContact({ id, transactionId, timeout } = {}) {
-    if (!id) {
-      return new Error('The "id" field is required to delete a contact.');
-    }
+  async deleteContact(options: DeleteContactOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(DeleteContactOptionsSchema, options, "Delete contact validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
-    const xml = buildDeleteContactCommand({ id, transactionId: clTRID });
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    const clTRID = options.transactionId ?? this._nextTransactionId();
+    const xml = buildDeleteContactCommand({ id: options.id, transactionId: clTRID });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
   // ========================================
   // DOMAIN COMMANDS
   // ========================================
 
-  async checkDomain({ name, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to check a domain.');
-    }
+  async checkDomain(options: CheckDomainOptions): Promise<DomainCheckResult | DomainCheckResult[] | Error> {
+    const validationError = validateSchema(CheckDomainOptionsSchema, options, "Check domain validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
-    const names = Array.isArray(name) ? name : [name];
+    const clTRID = options.transactionId ?? this._nextTransactionId();
+    const names = Array.isArray(options.name) ? options.name : [options.name];
     const xml = buildCheckDomainCommand({ names, transactionId: clTRID });
     const outcome = await this.sendCommand(xml, {
       transactionId: clTRID,
-      timeout,
+      timeout: options.timeout,
     });
 
     if (outcome instanceof Error) {
       return outcome;
     }
 
-    const resData = outcome?.data || {};
-    const chkData = resData["domain:chkData"] || resData.chkData || {};
-    const cd = ensureArray(chkData["domain:cd"] || chkData.cd || []);
+    const resData = (outcome.data || {}) as Record<string, unknown>;
+    const chkData = (resData["domain:chkData"] || resData.chkData || {}) as Record<string, unknown>;
+    const cd = ensureArray(chkData["domain:cd"] || chkData.cd || []) as XmlNode[];
 
-    const results = cd.map((item) => {
+    const results: DomainCheckResult[] = cd.map((item) => {
       const nameNode = item["domain:name"] || item.name || {};
       const domainName =
-        typeof nameNode === "string" ? nameNode : nameNode._ || nameNode;
-      const availRaw = nameNode.$?.avail ?? null;
+        typeof nameNode === "string" ? nameNode : (nameNode as XmlNode)._ || nameNode;
+      const availRaw = (nameNode as XmlNode)?.$?.avail ?? null;
       const availNum =
         typeof availRaw === "string" || typeof availRaw === "number"
           ? Number(availRaw)
@@ -479,195 +570,143 @@ export class EppClient extends EventEmitter {
 
       return {
         success: Boolean(outcome.success),
-        name: domainName,
-        availability,
+        name: String(domainName),
+        availability: availability as "registered" | "unregistered",
         reason,
       };
     });
 
-    return Array.isArray(name) ? results : results[0];
+    return Array.isArray(options.name) ? results : results[0]!;
   }
 
-  async createDomain({
-    name,
-    period = 1,
-    registrant,
-    nameservers = [],
-    contacts = [],
-    authPassword = "changeme",
-    transactionId,
-    timeout,
-  } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to create a domain.');
-    }
+  async createDomain(options: CreateDomainOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(CreateDomainOptionsSchema, options, "Create domain validation failed");
+    if (validationError) return validationError;
 
-    if (!registrant) {
-      return new Error(
-        'The "registrant" field is required to create a domain.',
-      );
-    }
-
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildCreateDomainCommand({
-      name,
-      period,
-      registrant,
-      nameservers,
-      contacts,
-      authPassword,
+      name: options.name,
+      period: options.period ?? 1,
+      registrant: options.registrant,
+      nameservers: options.nameservers ?? [],
+      contacts: options.contacts ?? [],
+      authPassword: options.authPassword ?? "changeme",
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
-  async infoDomain({ name, authInfo, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to get domain info.');
-    }
+  async infoDomain(options: InfoDomainOptions): Promise<DomainInfoResult | Error> {
+    const validationError = validateSchema(InfoDomainOptionsSchema, options, "Info domain validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildInfoDomainCommand({
-      name,
-      authInfo,
+      name: options.name,
+      authInfo: options.authInfo,
       transactionId: clTRID,
     });
     const outcome = await this.sendCommand(xml, {
       transactionId: clTRID,
-      timeout,
+      timeout: options.timeout,
     });
 
     if (outcome instanceof Error) {
       return outcome;
     }
 
-    const resData = outcome?.data || {};
+    const resData = (outcome.data || {}) as Record<string, unknown>;
     const infData = resData["domain:infData"] || resData.infData || {};
 
-    return parseDomainInfo(infData, name);
+    return parseDomainInfo(infData as Record<string, unknown>, options.name);
   }
 
-  async updateDomain({
-    name,
-    add,
-    remove,
-    change,
-    transactionId,
-    timeout,
-  } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to update a domain.');
-    }
+  async updateDomain(options: UpdateDomainOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(UpdateDomainOptionsSchema, options, "Update domain validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildUpdateDomainCommand({
-      name,
-      add,
-      remove,
-      change,
+      name: options.name,
+      add: options.add,
+      remove: options.remove,
+      change: options.change,
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
-  async deleteDomain({ name, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to delete a domain.');
-    }
+  async deleteDomain(options: DeleteDomainOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(DeleteDomainOptionsSchema, options, "Delete domain validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
-    const xml = buildDeleteDomainCommand({ name, transactionId: clTRID });
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    const clTRID = options.transactionId ?? this._nextTransactionId();
+    const xml = buildDeleteDomainCommand({ name: options.name, transactionId: clTRID });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
-  async renewDomain({
-    name,
-    currentExpiryDate,
-    period = 1,
-    transactionId,
-    timeout,
-  } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to renew a domain.');
-    }
+  async renewDomain(options: RenewDomainOptions): Promise<RenewDomainResult | Error> {
+    const validationError = validateSchema(RenewDomainOptionsSchema, options, "Renew domain validation failed");
+    if (validationError) return validationError;
 
-    if (!currentExpiryDate) {
-      return new Error(
-        'The "currentExpiryDate" field is required to renew a domain.',
-      );
-    }
-
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildRenewDomainCommand({
-      name,
-      currentExpiryDate,
-      period,
+      name: options.name,
+      currentExpiryDate: options.currentExpiryDate,
+      period: options.period ?? 1,
       transactionId: clTRID,
     });
 
     const outcome = await this.sendCommand(xml, {
       transactionId: clTRID,
-      timeout,
+      timeout: options.timeout,
     });
 
     if (outcome instanceof Error) {
       return outcome;
     }
 
-    const resData = outcome?.data || {};
-    const renData = resData["domain:renData"] || resData.renData || {};
+    const resData = (outcome.data || {}) as Record<string, unknown>;
+    const renData = (resData["domain:renData"] || resData.renData || {}) as Record<string, unknown>;
 
     return {
       success: true,
-      name: extractMessage(renData["domain:name"] || renData.name) || name,
+      name: extractMessage(renData["domain:name"] || renData.name) || options.name,
       expiryDate:
         extractMessage(renData["domain:exDate"] || renData.exDate) || null,
     };
   }
 
-  async transferDomain({
-    name,
-    authInfo,
-    period,
-    transactionId,
-    timeout,
-  } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to transfer a domain.');
-    }
+  async transferDomain(options: TransferDomainOptions): Promise<TransferDomainResult | Error> {
+    const validationError = validateSchema(TransferDomainOptionsSchema, options, "Transfer domain validation failed");
+    if (validationError) return validationError;
 
-    if (!authInfo) {
-      return new Error(
-        'The "authInfo" field is required to transfer a domain.',
-      );
-    }
-
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildTransferDomainCommand({
-      name,
-      authInfo,
-      period,
+      name: options.name,
+      authInfo: options.authInfo,
+      period: options.period,
       operation: "request",
       transactionId: clTRID,
     });
 
     const outcome = await this.sendCommand(xml, {
       transactionId: clTRID,
-      timeout,
+      timeout: options.timeout,
     });
 
     if (outcome instanceof Error) {
       return outcome;
     }
 
-    const resData = outcome?.data || {};
-    const trnData = resData["domain:trnData"] || resData.trnData || {};
+    const resData = (outcome.data || {}) as Record<string, unknown>;
+    const trnData = (resData["domain:trnData"] || resData.trnData || {}) as Record<string, unknown>;
 
     return {
       success: true,
-      name: extractMessage(trnData["domain:name"] || trnData.name) || name,
+      name: extractMessage(trnData["domain:name"] || trnData.name) || options.name,
       transferStatus:
         extractMessage(trnData["domain:trStatus"] || trnData.trStatus) || null,
       requestingRegistrar:
@@ -681,95 +720,85 @@ export class EppClient extends EventEmitter {
     };
   }
 
-  async queryTransfer({ name, authInfo, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error(
-        'The "name" field is required to query transfer status.',
-      );
-    }
+  async queryTransfer(options: TransferDomainOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(TransferDomainOptionsSchema, options, "Query transfer validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildTransferDomainCommand({
-      name,
-      authInfo,
+      name: options.name,
+      authInfo: options.authInfo,
       operation: "query",
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
-  async approveTransfer({ name, authInfo, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to approve a transfer.');
-    }
+  async approveTransfer(options: TransferDomainOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(TransferDomainOptionsSchema, options, "Approve transfer validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildTransferDomainCommand({
-      name,
-      authInfo,
+      name: options.name,
+      authInfo: options.authInfo,
       operation: "approve",
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
-  async rejectTransfer({ name, authInfo, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to reject a transfer.');
-    }
+  async rejectTransfer(options: TransferDomainOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(TransferDomainOptionsSchema, options, "Reject transfer validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildTransferDomainCommand({
-      name,
-      authInfo,
+      name: options.name,
+      authInfo: options.authInfo,
       operation: "reject",
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
-  async cancelTransfer({ name, authInfo, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to cancel a transfer.');
-    }
+  async cancelTransfer(options: TransferDomainOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(TransferDomainOptionsSchema, options, "Cancel transfer validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildTransferDomainCommand({
-      name,
-      authInfo,
+      name: options.name,
+      authInfo: options.authInfo,
       operation: "cancel",
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
   // ========================================
   // CONVENIENCE METHODS
   // ========================================
 
-  async updateNameservers({ name, nameservers, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to update nameservers.');
-    }
-    if (!Array.isArray(nameservers)) {
-      return new Error('The "nameservers" field must be an array.');
-    }
+  async updateNameservers(options: UpdateNameserversOptions): Promise<UpdateNameserversResult | CommandOutcome> {
+    const validationError = validateSchema(UpdateNameserversOptionsSchema, options, "Update nameservers validation failed");
+    if (validationError) return validationError;
 
-    const infoResult = await this.infoDomain({ name, transactionId, timeout });
+    const infoResult = await this.infoDomain({ name: options.name, transactionId: options.transactionId, timeout: options.timeout });
     if (infoResult instanceof Error) {
       return infoResult;
     }
 
     const currentNameservers = new Set(infoResult.nameservers);
-    const newNameservers = new Set(nameservers);
+    const newNameservers = new Set(options.nameservers);
 
-    const toAdd = nameservers.filter((ns) => !currentNameservers.has(ns));
+    const toAdd = options.nameservers.filter((ns) => !currentNameservers.has(ns));
     const toRemove = infoResult.nameservers.filter(
-      (ns) => !newNameservers.has(ns),
+      (ns) => !newNameservers.has(ns)
     );
 
     if (toAdd.length === 0 && toRemove.length === 0) {
@@ -777,32 +806,28 @@ export class EppClient extends EventEmitter {
     }
 
     return this.updateDomain({
-      name,
+      name: options.name,
       add: toAdd.length ? { nameservers: toAdd } : undefined,
       remove: toRemove.length ? { nameservers: toRemove } : undefined,
-      transactionId,
-      timeout,
+      transactionId: options.transactionId,
+      timeout: options.timeout,
     });
   }
 
-  async updateAutoRenew({ name, autoRenew, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to update auto-renew.');
-    }
-    if (typeof autoRenew !== "boolean") {
-      return new Error('The "autoRenew" field must be a boolean.');
-    }
+  async updateAutoRenew(options: UpdateAutoRenewOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(UpdateAutoRenewOptionsSchema, options, "Update auto-renew validation failed");
+    if (validationError) return validationError;
 
     // autoRenew = true  => remove clientRenewProhibited
     // autoRenew = false => add clientRenewProhibited
     const status = "clientRenewProhibited";
 
     return this.updateDomain({
-      name,
-      add: !autoRenew ? { status: [status] } : undefined,
-      remove: autoRenew ? { status: [status] } : undefined,
-      transactionId,
-      timeout,
+      name: options.name,
+      add: !options.autoRenew ? { status: [status] } : undefined,
+      remove: options.autoRenew ? { status: [status] } : undefined,
+      transactionId: options.transactionId,
+      timeout: options.timeout,
     });
   }
 
@@ -810,7 +835,10 @@ export class EppClient extends EventEmitter {
   // POLL COMMANDS
   // ========================================
 
-  async pollRequest({ transactionId, timeout } = {}) {
+  async pollRequest({
+    transactionId,
+    timeout,
+  }: PollRequestOptions = {}): Promise<PollRequestResult | Error> {
     const clTRID = transactionId ?? this._nextTransactionId();
     const xml = buildPollCommand({ operation: "req", transactionId: clTRID });
     const outcome = await this.sendCommand(xml, {
@@ -822,42 +850,39 @@ export class EppClient extends EventEmitter {
       return outcome;
     }
 
-    const queue = outcome?.queue || null;
-    const resData = outcome?.data || null;
+    const queue = outcome.queue as QueueInfo | null;
+    const resData = outcome.data || null;
 
     return {
       success: true,
       count: queue?.$?.count ? Number(queue.$.count) : 0,
       messageId: queue?.$?.id || null,
-      queueDate: queue?.qDate || null,
+      queueDate: (queue?.qDate as string) || null,
       message: extractMessage(queue?.msg) || null,
       data: resData,
     };
   }
 
-  async pollAck({ messageId, transactionId, timeout } = {}) {
-    if (!messageId) {
-      return new Error(
-        'The "messageId" field is required to acknowledge a poll message.',
-      );
-    }
+  async pollAck(options: PollAckOptions): Promise<PollAckResult | Error> {
+    const validationError = validateSchema(PollAckOptionsSchema, options, "Poll ack validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildPollCommand({
       operation: "ack",
-      messageId,
+      messageId: options.messageId,
       transactionId: clTRID,
     });
     const outcome = await this.sendCommand(xml, {
       transactionId: clTRID,
-      timeout,
+      timeout: options.timeout,
     });
 
     if (outcome instanceof Error) {
       return outcome;
     }
 
-    const queue = outcome?.queue || null;
+    const queue = outcome.queue as QueueInfo | null;
 
     return {
       success: true,
@@ -870,32 +895,31 @@ export class EppClient extends EventEmitter {
   // HOST COMMANDS
   // ========================================
 
-  async checkHost({ name, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to check a host.');
-    }
+  async checkHost(options: CheckHostOptions): Promise<HostCheckResult | HostCheckResult[] | Error> {
+    const validationError = validateSchema(CheckHostOptionsSchema, options, "Check host validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
-    const names = Array.isArray(name) ? name : [name];
+    const clTRID = options.transactionId ?? this._nextTransactionId();
+    const names = Array.isArray(options.name) ? options.name : [options.name];
     const xml = buildCheckHostCommand({ names, transactionId: clTRID });
     const outcome = await this.sendCommand(xml, {
       transactionId: clTRID,
-      timeout,
+      timeout: options.timeout,
     });
 
     if (outcome instanceof Error) {
       return outcome;
     }
 
-    const resData = outcome?.data || {};
-    const chkData = resData["host:chkData"] || resData.chkData || {};
-    const cd = ensureArray(chkData["host:cd"] || chkData.cd || []);
+    const resData = (outcome.data || {}) as Record<string, unknown>;
+    const chkData = (resData["host:chkData"] || resData.chkData || {}) as Record<string, unknown>;
+    const cd = ensureArray(chkData["host:cd"] || chkData.cd || []) as XmlNode[];
 
-    const results = cd.map((item) => {
+    const results: HostCheckResult[] = cd.map((item) => {
       const nameNode = item["host:name"] || item.name || {};
       const hostName =
-        typeof nameNode === "string" ? nameNode : nameNode._ || nameNode;
-      const availRaw = nameNode.$?.avail ?? null;
+        typeof nameNode === "string" ? nameNode : (nameNode as XmlNode)._ || nameNode;
+      const availRaw = (nameNode as XmlNode)?.$?.avail ?? null;
       const availNum =
         typeof availRaw === "string" || typeof availRaw === "number"
           ? Number(availRaw)
@@ -903,83 +927,79 @@ export class EppClient extends EventEmitter {
       const available = availNum === 1;
 
       return {
-        name: hostName,
+        name: String(hostName),
         available,
         reason: extractMessage(item["host:reason"] || item.reason) || null,
       };
     });
 
-    return Array.isArray(name) ? results : results[0];
+    return Array.isArray(options.name) ? results : results[0]!;
   }
 
-  async createHost({ name, addresses = [], transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to create a host.');
-    }
+  async createHost(options: CreateHostOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(CreateHostOptionsSchema, options, "Create host validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildCreateHostCommand({
-      name,
-      addresses,
+      name: options.name,
+      addresses: options.addresses ?? [],
       transactionId: clTRID,
     });
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
-  async infoHost({ name, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to get host info.');
-    }
+  async infoHost(options: InfoHostOptions): Promise<HostInfoResult | Error> {
+    const validationError = validateSchema(InfoHostOptionsSchema, options, "Info host validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
-    const xml = buildInfoHostCommand({ name, transactionId: clTRID });
+    const clTRID = options.transactionId ?? this._nextTransactionId();
+    const xml = buildInfoHostCommand({ name: options.name, transactionId: clTRID });
     const outcome = await this.sendCommand(xml, {
       transactionId: clTRID,
-      timeout,
+      timeout: options.timeout,
     });
 
     if (outcome instanceof Error) {
       return outcome;
     }
 
-    const resData = outcome?.data || {};
+    const resData = (outcome.data || {}) as Record<string, unknown>;
     const infData = resData["host:infData"] || resData.infData || {};
 
-    return parseHostInfo(infData, name);
+    return parseHostInfo(infData as Record<string, unknown>, options.name);
   }
 
-  async updateHost({ name, add, remove, change, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to update a host.');
-    }
+  async updateHost(options: UpdateHostOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(UpdateHostOptionsSchema, options, "Update host validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
+    const clTRID = options.transactionId ?? this._nextTransactionId();
     const xml = buildUpdateHostCommand({
-      name,
-      add,
-      remove,
-      change,
+      name: options.name,
+      add: options.add,
+      remove: options.remove,
+      change: options.change,
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
-  async deleteHost({ name, transactionId, timeout } = {}) {
-    if (!name) {
-      return new Error('The "name" field is required to delete a host.');
-    }
+  async deleteHost(options: DeleteHostOptions): Promise<CommandOutcome> {
+    const validationError = validateSchema(DeleteHostOptionsSchema, options, "Delete host validation failed");
+    if (validationError) return validationError;
 
-    const clTRID = transactionId ?? this._nextTransactionId();
-    const xml = buildDeleteHostCommand({ name, transactionId: clTRID });
-    return this.sendCommand(xml, { transactionId: clTRID, timeout });
+    const clTRID = options.transactionId ?? this._nextTransactionId();
+    const xml = buildDeleteHostCommand({ name: options.name, transactionId: clTRID });
+    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
   }
 
   // ========================================
   // INTERNAL METHODS
   // ========================================
 
-  async _handleData(chunk) {
+  private async _handleData(chunk: Buffer): Promise<void> {
     this._buffer = Buffer.concat([this._buffer, chunk]);
 
     while (this._buffer.length >= 4) {
@@ -989,8 +1009,8 @@ export class EppClient extends EventEmitter {
         return;
       }
 
-      const payload = this._buffer.slice(4, messageLength);
-      this._buffer = this._buffer.slice(messageLength);
+      const payload = this._buffer.subarray(4, messageLength);
+      this._buffer = this._buffer.subarray(messageLength);
       const xml = payload
         .toString("utf8")
         .replace(/\u0000/g, "")
@@ -1010,8 +1030,8 @@ export class EppClient extends EventEmitter {
     }
   }
 
-  async _processIncomingXml(xml) {
-    let parsed;
+  private async _processIncomingXml(xml: string): Promise<Error | null> {
+    let parsed: EppXmlResponse;
 
     try {
       parsed = await parseStringPromise(xml, {
@@ -1037,7 +1057,7 @@ export class EppClient extends EventEmitter {
     const transactionId = normalized.transactionId;
 
     if (transactionId && this._pending.has(transactionId)) {
-      const settle = this._pending.get(transactionId);
+      const settle = this._pending.get(transactionId)!;
       this._pending.delete(transactionId);
 
       if (normalized.success) {
@@ -1058,7 +1078,7 @@ export class EppClient extends EventEmitter {
     return null;
   }
 
-  _handleClose(error) {
+  private _handleClose(error?: Error): void {
     if (this._socket) {
       this._socket.removeListener("data", this._onData);
       this._socket.removeListener("close", this._onClose);
@@ -1081,7 +1101,7 @@ export class EppClient extends EventEmitter {
     }
   }
 
-  _handleSocketError(error) {
+  private _handleSocketError(error: Error): void {
     const normalized = normalizeError(error, "Socket error encountered.");
     this.emit("error", normalized);
     this._resolveAll(normalized);
@@ -1091,7 +1111,7 @@ export class EppClient extends EventEmitter {
     }
   }
 
-  _resolveAll(outcome) {
+  private _resolveAll(outcome: Error | unknown): void {
     const resolvedOutcome =
       outcome instanceof Error ? outcome : normalizeError(outcome);
 
@@ -1102,7 +1122,7 @@ export class EppClient extends EventEmitter {
     this._pending.clear();
   }
 
-  _ensureConnected() {
+  private _ensureConnected(): Error | null {
     if (!this._socket || !this._connected) {
       return new Error("The client is not connected. Call connect() first.");
     }
@@ -1110,12 +1130,15 @@ export class EppClient extends EventEmitter {
     return null;
   }
 
-  _nextTransactionId() {
+  private _nextTransactionId(): string {
     this._transactionIdCounter += 1;
     return `tx-${Date.now()}-${this._transactionIdCounter}`;
   }
 
-  _prepareCommand(xml, providedTransactionId) {
+  private _prepareCommand(
+    xml: string,
+    providedTransactionId?: string
+  ): PreparedCommand | Error {
     const trimmed = typeof xml === "string" ? xml.trim() : "";
 
     if (!trimmed) {
@@ -1135,14 +1158,14 @@ export class EppClient extends EventEmitter {
 
     if (!/<\/command>/i.test(trimmed)) {
       return new Error(
-        "Unable to inject <clTRID>: no </command> closing tag found.",
+        "Unable to inject <clTRID>: no </command> closing tag found."
       );
     }
 
     const injection = `    <clTRID>${escapeXml(transactionId)}</clTRID>`;
     const updated = trimmed.replace(
       /<\/command>/i,
-      `${injection}\n  </command>`,
+      `${injection}\n  </command>`
     );
 
     return { xml: updated, transactionId };
@@ -1153,7 +1176,7 @@ export class EppClient extends EventEmitter {
 // COMMAND BUILDERS
 // ========================================
 
-function buildHelloCommand() {
+function buildHelloCommand(): string {
   return `${XML_HEADER}
 <epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
   <hello/>
@@ -1166,7 +1189,7 @@ function buildLoginCommand({
   services,
   extensions,
   transactionId,
-}) {
+}: BuildLoginCommandOptions): string {
   const serviceLines = (
     services && services.length ? services : DEFAULT_SERVICES
   )
@@ -1176,12 +1199,12 @@ function buildLoginCommand({
   const extensionLines =
     extensions && extensions.length
       ? [
-        "        <svcExtension>",
-        ...extensions.map(
-          (uri) => `          <extURI>${escapeXml(uri)}</extURI>`,
-        ),
-        "        </svcExtension>",
-      ]
+          "        <svcExtension>",
+          ...extensions.map(
+            (uri) => `          <extURI>${escapeXml(uri)}</extURI>`
+          ),
+          "        </svcExtension>",
+        ]
       : [];
 
   const lines = [
@@ -1208,7 +1231,7 @@ function buildLoginCommand({
   return lines.filter(Boolean).join("\n");
 }
 
-function buildLogoutCommand({ transactionId }) {
+function buildLogoutCommand({ transactionId }: BuildLogoutCommandOptions): string {
   return `${XML_HEADER}
 <epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
   <command>
@@ -1222,7 +1245,10 @@ function buildLogoutCommand({ transactionId }) {
 // CONTACT COMMANDS
 // ========================================
 
-function buildCheckContactCommand({ ids, transactionId }) {
+function buildCheckContactCommand({
+  ids,
+  transactionId,
+}: BuildCheckContactCommandOptions): string {
   const idLines = ids
     .map((id) => `        <contact:id>${escapeXml(id)}</contact:id>`)
     .join("\n");
@@ -1253,16 +1279,16 @@ function buildCreateContactCommand({
   email,
   authInfo,
   transactionId,
-}) {
+}: BuildCreateContactCommandOptions): string {
   const lines = Array.isArray(addressLines) ? addressLines : [addressLines];
   const streets = lines
     .filter(Boolean)
     .map(
       (line) =>
-        `            <contact:street>${escapeXml(line)}</contact:street>`,
+        `            <contact:street>${escapeXml(line)}</contact:street>`
     );
 
-  const contactLines = [
+  const contactLines: (string | null)[] = [
     XML_HEADER,
     '<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">',
     "  <command>",
@@ -1299,7 +1325,10 @@ function buildCreateContactCommand({
   return contactLines.filter(Boolean).join("\n");
 }
 
-function buildInfoContactCommand({ id, transactionId }) {
+function buildInfoContactCommand({
+  id,
+  transactionId,
+}: BuildInfoContactCommandOptions): string {
   return `${XML_HEADER}
 <epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
   <command>
@@ -1313,10 +1342,16 @@ function buildInfoContactCommand({ id, transactionId }) {
 </epp>`;
 }
 
-function buildUpdateContactCommand({ id, add, remove, change, transactionId }) {
-  const addBlock = [];
-  const remBlock = [];
-  const chgBlock = [];
+function buildUpdateContactCommand({
+  id,
+  add,
+  remove,
+  change,
+  transactionId,
+}: BuildUpdateContactCommandOptions): string {
+  const addBlock: string[] = [];
+  const remBlock: string[] = [];
+  const chgBlock: string[] = [];
 
   if (add && add.status && add.status.length > 0) {
     addBlock.push("        <contact:add>");
@@ -1360,12 +1395,12 @@ function buildUpdateContactCommand({ id, add, remove, change, transactionId }) {
         chgBlock.push('          <contact:postalInfo type="loc">');
         if (change.name) {
           chgBlock.push(
-            `            <contact:name>${escapeXml(change.name)}</contact:name>`,
+            `            <contact:name>${escapeXml(change.name)}</contact:name>`
           );
         }
         if (change.organisation) {
           chgBlock.push(
-            `            <contact:org>${escapeXml(change.organisation)}</contact:org>`,
+            `            <contact:org>${escapeXml(change.organisation)}</contact:org>`
           );
         }
 
@@ -1379,34 +1414,34 @@ function buildUpdateContactCommand({ id, add, remove, change, transactionId }) {
           chgBlock.push("            <contact:addr>");
 
           if (change.addressLines) {
-            const lines = Array.isArray(change.addressLines)
+            const addrLines = Array.isArray(change.addressLines)
               ? change.addressLines
               : [change.addressLines];
-            lines.filter(Boolean).forEach((line) => {
+            addrLines.filter(Boolean).forEach((line) => {
               chgBlock.push(
-                `              <contact:street>${escapeXml(line)}</contact:street>`,
+                `              <contact:street>${escapeXml(line)}</contact:street>`
               );
             });
           }
 
           if (change.city) {
             chgBlock.push(
-              `              <contact:city>${escapeXml(change.city)}</contact:city>`,
+              `              <contact:city>${escapeXml(change.city)}</contact:city>`
             );
           }
           if (change.state) {
             chgBlock.push(
-              `              <contact:sp>${escapeXml(change.state)}</contact:sp>`,
+              `              <contact:sp>${escapeXml(change.state)}</contact:sp>`
             );
           }
           if (change.postcode) {
             chgBlock.push(
-              `              <contact:pc>${escapeXml(change.postcode)}</contact:pc>`,
+              `              <contact:pc>${escapeXml(change.postcode)}</contact:pc>`
             );
           }
           if (change.country) {
             chgBlock.push(
-              `              <contact:cc>${escapeXml(change.country)}</contact:cc>`,
+              `              <contact:cc>${escapeXml(change.country)}</contact:cc>`
             );
           }
 
@@ -1417,18 +1452,18 @@ function buildUpdateContactCommand({ id, add, remove, change, transactionId }) {
 
       if (change.phone) {
         chgBlock.push(
-          `          <contact:voice>${escapeXml(change.phone)}</contact:voice>`,
+          `          <contact:voice>${escapeXml(change.phone)}</contact:voice>`
         );
       }
       if (change.email) {
         chgBlock.push(
-          `          <contact:email>${escapeXml(change.email)}</contact:email>`,
+          `          <contact:email>${escapeXml(change.email)}</contact:email>`
         );
       }
       if (change.authInfo) {
         chgBlock.push("          <contact:authInfo>");
         chgBlock.push(
-          `            <contact:pw>${escapeXml(change.authInfo)}</contact:pw>`,
+          `            <contact:pw>${escapeXml(change.authInfo)}</contact:pw>`
         );
         chgBlock.push("          </contact:authInfo>");
       }
@@ -1457,7 +1492,10 @@ function buildUpdateContactCommand({ id, add, remove, change, transactionId }) {
   return lines.join("\n");
 }
 
-function buildDeleteContactCommand({ id, transactionId }) {
+function buildDeleteContactCommand({
+  id,
+  transactionId,
+}: BuildDeleteContactCommandOptions): string {
   return `${XML_HEADER}
 <epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
   <command>
@@ -1475,7 +1513,10 @@ function buildDeleteContactCommand({ id, transactionId }) {
 // DOMAIN COMMANDS
 // ========================================
 
-function buildCheckDomainCommand({ names, transactionId }) {
+function buildCheckDomainCommand({
+  names,
+  transactionId,
+}: BuildCheckDomainCommandOptions): string {
   const nameLines = names
     .map((name) => `        <domain:name>${escapeXml(name)}</domain:name>`)
     .join("\n");
@@ -1501,14 +1542,14 @@ function buildCreateDomainCommand({
   contacts,
   authPassword,
   transactionId,
-}) {
+}: BuildCreateDomainCommandOptions): string {
   const nameserverLines = (nameservers || [])
     .filter(Boolean)
     .map((ns) => `          <domain:hostObj>${escapeXml(ns)}</domain:hostObj>`);
 
   const contactLines = (contacts || []).filter(Boolean).map((contact) => {
-    const type = contact.type || "admin";
-    const id = contact.id || contact;
+    const type = typeof contact === "string" ? "admin" : contact.type || "admin";
+    const id = typeof contact === "string" ? contact : contact.id;
     return `        <domain:contact type="${escapeXml(type)}">${escapeXml(id)}</domain:contact>`;
   });
 
@@ -1538,13 +1579,17 @@ function buildCreateDomainCommand({
   return lines.filter(Boolean).join("\n");
 }
 
-function buildInfoDomainCommand({ name, authInfo, transactionId }) {
+function buildInfoDomainCommand({
+  name,
+  authInfo,
+  transactionId,
+}: BuildInfoDomainCommandOptions): string {
   const authBlock = authInfo
     ? [
-      "        <domain:authInfo>",
-      `          <domain:pw>${escapeXml(authInfo)}</domain:pw>`,
-      "        </domain:authInfo>",
-    ]
+        "        <domain:authInfo>",
+        `          <domain:pw>${escapeXml(authInfo)}</domain:pw>`,
+        "        </domain:authInfo>",
+      ]
     : [];
 
   const lines = [
@@ -1571,24 +1616,24 @@ function buildUpdateDomainCommand({
   remove = {},
   change = {},
   transactionId,
-}) {
-  const buildNsList = (list) => {
+}: BuildUpdateDomainCommandOptions): string {
+  const buildNsList = (list?: string[]): string[] => {
     if (!list || !list.length) return [];
     return list.map(
-      (ns) => `          <domain:hostObj>${escapeXml(ns)}</domain:hostObj>`,
+      (ns) => `          <domain:hostObj>${escapeXml(ns)}</domain:hostObj>`
     );
   };
 
-  const buildStatusList = (list) => {
+  const buildStatusList = (list?: string[]): string[] => {
     if (!list || !list.length) return [];
     return list.map((s) => `          <domain:status s="${escapeXml(s)}"/>`);
   };
 
-  const buildContactList = (list) => {
+  const buildContactList = (list?: Array<DomainContact | string>): string[] => {
     if (!list || !list.length) return [];
     return list.map((contact) => {
-      const type = contact.type || "admin";
-      const id = contact.id || contact;
+      const type = typeof contact === "string" ? "admin" : contact.type || "admin";
+      const id = typeof contact === "string" ? contact : contact.id;
       return `          <domain:contact type="${escapeXml(type)}">${escapeXml(id)}</domain:contact>`;
     });
   };
@@ -1603,41 +1648,41 @@ function buildUpdateDomainCommand({
   const addBlock =
     addNs.length || addStatus.length || addContacts.length
       ? [
-        "        <domain:add>",
-        ...(addNs.length
-          ? ["          <domain:ns>", ...addNs, "          </domain:ns>"]
-          : []),
-        ...addContacts,
-        ...addStatus,
-        "        </domain:add>",
-      ]
+          "        <domain:add>",
+          ...(addNs.length
+            ? ["          <domain:ns>", ...addNs, "          </domain:ns>"]
+            : []),
+          ...addContacts,
+          ...addStatus,
+          "        </domain:add>",
+        ]
       : [];
 
   const remBlock =
     remNs.length || remStatus.length || remContacts.length
       ? [
-        "        <domain:rem>",
-        ...(remNs.length
-          ? ["          <domain:ns>", ...remNs, "          </domain:ns>"]
-          : []),
-        ...remContacts,
-        ...remStatus,
-        "        </domain:rem>",
-      ]
+          "        <domain:rem>",
+          ...(remNs.length
+            ? ["          <domain:ns>", ...remNs, "          </domain:ns>"]
+            : []),
+          ...remContacts,
+          ...remStatus,
+          "        </domain:rem>",
+        ]
       : [];
 
-  const chgBlock = [];
+  const chgBlock: string[] = [];
   if (change.registrant || change.authInfo) {
     chgBlock.push("        <domain:chg>");
     if (change.registrant) {
       chgBlock.push(
-        `          <domain:registrant>${escapeXml(change.registrant)}</domain:registrant>`,
+        `          <domain:registrant>${escapeXml(change.registrant)}</domain:registrant>`
       );
     }
     if (change.authInfo) {
       chgBlock.push("          <domain:authInfo>");
       chgBlock.push(
-        `            <domain:pw>${escapeXml(change.authInfo)}</domain:pw>`,
+        `            <domain:pw>${escapeXml(change.authInfo)}</domain:pw>`
       );
       chgBlock.push("          </domain:authInfo>");
     }
@@ -1664,7 +1709,10 @@ function buildUpdateDomainCommand({
   return lines.join("\n");
 }
 
-function buildDeleteDomainCommand({ name, transactionId }) {
+function buildDeleteDomainCommand({
+  name,
+  transactionId,
+}: BuildDeleteDomainCommandOptions): string {
   return `${XML_HEADER}
 <epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
   <command>
@@ -1683,14 +1731,16 @@ function buildRenewDomainCommand({
   currentExpiryDate,
   period,
   transactionId,
-}) {
+}: BuildRenewDomainCommandOptions): string {
   // Format date as YYYY-MM-DD if it's a Date object
-  let dateStr = currentExpiryDate;
+  let dateStr: string;
   if (currentExpiryDate instanceof Date) {
-    dateStr = currentExpiryDate.toISOString().split("T")[0];
+    dateStr = currentExpiryDate.toISOString().split("T")[0]!;
   } else if (typeof currentExpiryDate === "string") {
     // Extract just the date part if it includes time
-    dateStr = currentExpiryDate.split("T")[0];
+    dateStr = currentExpiryDate.split("T")[0]!;
+  } else {
+    dateStr = String(currentExpiryDate);
   }
 
   return `${XML_HEADER}
@@ -1714,16 +1764,16 @@ function buildTransferDomainCommand({
   period,
   operation,
   transactionId,
-}) {
+}: BuildTransferDomainCommandOptions): string {
   const periodLine = period
     ? `        <domain:period unit="y">${escapeXml(period)}</domain:period>`
     : "";
   const authBlock = authInfo
     ? [
-      "        <domain:authInfo>",
-      `          <domain:pw>${escapeXml(authInfo)}</domain:pw>`,
-      "        </domain:authInfo>",
-    ]
+        "        <domain:authInfo>",
+        `          <domain:pw>${escapeXml(authInfo)}</domain:pw>`,
+        "        </domain:authInfo>",
+      ]
     : [];
 
   const lines = [
@@ -1749,7 +1799,11 @@ function buildTransferDomainCommand({
 // POLL COMMANDS
 // ========================================
 
-function buildPollCommand({ operation, messageId, transactionId }) {
+function buildPollCommand({
+  operation,
+  messageId,
+  transactionId,
+}: BuildPollCommandOptions): string {
   if (operation === "ack" && messageId) {
     return `${XML_HEADER}
 <epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
@@ -1770,10 +1824,162 @@ function buildPollCommand({ operation, messageId, transactionId }) {
 }
 
 // ========================================
+// HOST COMMANDS
+// ========================================
+
+function buildCheckHostCommand({
+  names,
+  transactionId,
+}: BuildCheckHostCommandOptions): string {
+  const nameLines = names
+    .map((name) => `        <host:name>${escapeXml(name)}</host:name>`)
+    .join("\n");
+
+  return `${XML_HEADER}
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <command>
+    <check>
+      <host:check xmlns:host="urn:ietf:params:xml:ns:host-1.0">
+${nameLines}
+      </host:check>
+    </check>
+    <clTRID>${escapeXml(transactionId)}</clTRID>
+  </command>
+</epp>`;
+}
+
+function buildCreateHostCommand({
+  name,
+  addresses,
+  transactionId,
+}: BuildCreateHostCommandOptions): string {
+  const addrLines = (addresses || [])
+    .filter(Boolean)
+    .map(
+      (addr) =>
+        `        <host:addr ip="${escapeXml(addr.ip)}">${escapeXml(addr.address)}</host:addr>`
+    );
+
+  const lines = [
+    XML_HEADER,
+    '<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">',
+    "  <command>",
+    "    <create>",
+    '      <host:create xmlns:host="urn:ietf:params:xml:ns:host-1.0">',
+    `        <host:name>${escapeXml(name)}</host:name>`,
+    ...addrLines,
+    "      </host:create>",
+    "    </create>",
+    `    <clTRID>${escapeXml(transactionId)}</clTRID>`,
+    "  </command>",
+    "</epp>",
+  ];
+
+  return lines.join("\n");
+}
+
+function buildInfoHostCommand({
+  name,
+  transactionId,
+}: BuildInfoHostCommandOptions): string {
+  return `${XML_HEADER}
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <command>
+    <info>
+      <host:info xmlns:host="urn:ietf:params:xml:ns:host-1.0">
+        <host:name>${escapeXml(name)}</host:name>
+      </host:info>
+    </info>
+    <clTRID>${escapeXml(transactionId)}</clTRID>
+  </command>
+</epp>`;
+}
+
+function buildUpdateHostCommand({
+  name,
+  add,
+  remove,
+  change,
+  transactionId,
+}: BuildUpdateHostCommandOptions): string {
+  const buildAddrList = (list?: HostAddress[]): string[] => {
+    if (!list || !list.length) return [];
+    return list.map(
+      (addr) =>
+        `          <host:addr ip="${escapeXml(addr.ip)}">${escapeXml(addr.address)}</host:addr>`
+    );
+  };
+
+  const buildStatusList = (list?: string[]): string[] => {
+    if (!list || !list.length) return [];
+    return list.map((s) => `          <host:status s="${escapeXml(s)}"/>`);
+  };
+
+  const addAddrs = buildAddrList(add?.addresses);
+  const addStatus = buildStatusList(add?.status);
+  const remAddrs = buildAddrList(remove?.addresses);
+  const remStatus = buildStatusList(remove?.status);
+
+  const addBlock =
+    addAddrs.length || addStatus.length
+      ? ["        <host:add>", ...addAddrs, ...addStatus, "        </host:add>"]
+      : [];
+
+  const remBlock =
+    remAddrs.length || remStatus.length
+      ? ["        <host:rem>", ...remAddrs, ...remStatus, "        </host:rem>"]
+      : [];
+
+  const chgBlock = change?.name
+    ? [
+        "        <host:chg>",
+        `          <host:name>${escapeXml(change.name)}</host:name>`,
+        "        </host:chg>",
+      ]
+    : [];
+
+  const lines = [
+    XML_HEADER,
+    '<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">',
+    "  <command>",
+    "    <update>",
+    '      <host:update xmlns:host="urn:ietf:params:xml:ns:host-1.0">',
+    `        <host:name>${escapeXml(name)}</host:name>`,
+    ...addBlock,
+    ...remBlock,
+    ...chgBlock,
+    "      </host:update>",
+    "    </update>",
+    `    <clTRID>${escapeXml(transactionId)}</clTRID>`,
+    "  </command>",
+    "</epp>",
+  ];
+
+  return lines.join("\n");
+}
+
+function buildDeleteHostCommand({
+  name,
+  transactionId,
+}: BuildDeleteHostCommandOptions): string {
+  return `${XML_HEADER}
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <command>
+    <delete>
+      <host:delete xmlns:host="urn:ietf:params:xml:ns:host-1.0">
+        <host:name>${escapeXml(name)}</host:name>
+      </host:delete>
+    </delete>
+    <clTRID>${escapeXml(transactionId)}</clTRID>
+  </command>
+</epp>`;
+}
+
+// ========================================
 // RESPONSE NORMALIZATION
 // ========================================
 
-export function normalizeEppResponse(parsed) {
+export function normalizeEppResponse(parsed: EppXmlResponse): CommandResult {
   const epp = parsed?.epp || {};
 
   if (epp.greeting) {
@@ -1792,12 +1998,12 @@ export function normalizeEppResponse(parsed) {
   }
 
   const response = epp.response || {};
-  const results = ensureArray(response.result);
-  const firstResult = results[0] || {};
+  const results = ensureArray(response.result) as XmlNode[];
+  const firstResult = (results[0] || {}) as XmlNode;
   const resultCode = firstResult?.$?.code ? Number(firstResult.$.code) : null;
   const resultMessages = results
     .map((item) => extractMessage(item?.msg))
-    .filter((msg) => msg.length > 0);
+    .filter((msg: string) => msg.length > 0);
   const resultMessage = resultMessages.join(" ").trim();
   const transactionId = response.trID?.clTRID || null;
   const serverTransactionId = response.trID?.svTRID || null;
@@ -1812,7 +2018,7 @@ export function normalizeEppResponse(parsed) {
     transactionId,
     serverTransactionId,
     data: response.resData || null,
-    queue: response.msgQ || null,
+    queue: (response.msgQ as QueueInfo) || null,
     extension: response.extension || null,
   };
 }
@@ -1821,46 +2027,50 @@ export function normalizeEppResponse(parsed) {
 // PARSING HELPERS
 // ========================================
 
-function parseDomainInfo(infData, fallbackName = "") {
-  const nsNode = infData?.["domain:ns"] || infData?.ns || {};
+function parseDomainInfo(
+  infData: Record<string, unknown>,
+  fallbackName: string = ""
+): DomainInfoResult {
+  const nsNode = (infData?.["domain:ns"] || infData?.ns || {}) as Record<string, unknown>;
   const hostObj = nsNode["domain:hostObj"] || nsNode.hostObj || [];
-  const nameservers = ensureArray(hostObj);
+  const nameservers = ensureArray(hostObj).map((h) => String(h));
 
   const registrantId = extractMessage(
-    infData?.["domain:registrant"] || infData?.registrant,
+    infData?.["domain:registrant"] || infData?.registrant
   );
   const domainId = extractMessage(infData?.["domain:roid"] || infData?.roid);
   const clientId = extractMessage(infData?.["domain:clID"] || infData?.clID);
   const createdBy = extractMessage(infData?.["domain:crID"] || infData?.crID);
   const createdDate = extractMessage(
-    infData?.["domain:crDate"] || infData?.crDate,
+    infData?.["domain:crDate"] || infData?.crDate
   );
   const updatedBy = extractMessage(infData?.["domain:upID"] || infData?.upID);
   const updatedDate = extractMessage(
-    infData?.["domain:upDate"] || infData?.upDate,
+    infData?.["domain:upDate"] || infData?.upDate
   );
   const expiryDate = extractMessage(
-    infData?.["domain:exDate"] || infData?.exDate,
+    infData?.["domain:exDate"] || infData?.exDate
   );
   const transferDate = extractMessage(
-    infData?.["domain:trDate"] || infData?.trDate,
+    infData?.["domain:trDate"] || infData?.trDate
   );
 
   const statusNode = infData?.["domain:status"] || infData?.status || [];
-  const statuses = ensureArray(statusNode)
+  const statuses = (ensureArray(statusNode) as XmlNode[])
     .map((s) => s?.$?.s || s)
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((s) => String(s));
 
   const nameValue =
     extractMessage(infData?.["domain:name"] || infData?.name) || fallbackName;
 
   // Parse contacts
   const contactNodes = ensureArray(
-    infData?.["domain:contact"] || infData?.contact || [],
-  );
-  const contacts = contactNodes.map((c) => ({
-    id: typeof c === "string" ? c : c._ || c,
-    type: c?.$?.type || "admin",
+    infData?.["domain:contact"] || infData?.contact || []
+  ) as XmlNode[];
+  const contacts: DomainContact[] = contactNodes.map((c) => ({
+    id: typeof c === "string" ? c : String((c as XmlNode)._ || c),
+    type: (c as XmlNode)?.$?.type?.toString() || "admin",
   }));
 
   return {
@@ -1881,23 +2091,30 @@ function parseDomainInfo(infData, fallbackName = "") {
   };
 }
 
-function parseContactInfo(infData, fallbackId = "") {
+function parseContactInfo(
+  infData: Record<string, unknown>,
+  fallbackId: string = ""
+): ContactInfoResult {
   const contactId =
     extractMessage(infData?.["contact:id"] || infData?.id) || fallbackId;
   const roid = extractMessage(infData?.["contact:roid"] || infData?.roid);
 
   const statusNode = infData?.["contact:status"] || infData?.status || [];
-  const statuses = ensureArray(statusNode)
+  const statuses = (ensureArray(statusNode) as XmlNode[])
     .map((s) => s?.$?.s || s)
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((s) => String(s));
 
-  const postalInfo =
-    infData?.["contact:postalInfo"] || infData?.postalInfo || {};
+  const postalInfo = (infData?.["contact:postalInfo"] ||
+    infData?.postalInfo ||
+    {}) as Record<string, unknown>;
   const name = extractMessage(postalInfo?.["contact:name"] || postalInfo?.name);
   const org = extractMessage(postalInfo?.["contact:org"] || postalInfo?.org);
 
-  const addr = postalInfo?.["contact:addr"] || postalInfo?.addr || {};
-  const streets = ensureArray(addr?.["contact:street"] || addr?.street || []);
+  const addr = (postalInfo?.["contact:addr"] || postalInfo?.addr || {}) as Record<string, unknown>;
+  const streets = ensureArray(addr?.["contact:street"] || addr?.street || []).map(
+    (s) => String(s)
+  );
   const city = extractMessage(addr?.["contact:city"] || addr?.city);
   const state = extractMessage(addr?.["contact:sp"] || addr?.sp);
   const postcode = extractMessage(addr?.["contact:pc"] || addr?.pc);
@@ -1938,20 +2155,24 @@ function parseContactInfo(infData, fallbackId = "") {
   };
 }
 
-function parseHostInfo(infData, fallbackName = "") {
+function parseHostInfo(
+  infData: Record<string, unknown>,
+  fallbackName: string = ""
+): HostInfoResult {
   const hostName =
     extractMessage(infData?.["host:name"] || infData?.name) || fallbackName;
   const roid = extractMessage(infData?.["host:roid"] || infData?.roid);
 
   const statusNode = infData?.["host:status"] || infData?.status || [];
-  const statuses = ensureArray(statusNode)
+  const statuses = (ensureArray(statusNode) as XmlNode[])
     .map((s) => s?.$?.s || s)
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((s) => String(s));
 
-  const addrNodes = ensureArray(infData?.["host:addr"] || infData?.addr || []);
-  const addresses = addrNodes.map((a) => ({
-    ip: a?.$?.ip || "v4",
-    address: typeof a === "string" ? a : a._ || a,
+  const addrNodes = ensureArray(infData?.["host:addr"] || infData?.addr || []) as XmlNode[];
+  const addresses: HostAddress[] = addrNodes.map((a) => ({
+    ip: (a?.$?.ip as "v4" | "v6") || "v4",
+    address: typeof a === "string" ? a : String(a._ || a),
   }));
 
   const clID = extractMessage(infData?.["host:clID"] || infData?.clID);
@@ -1980,7 +2201,7 @@ function parseHostInfo(infData, fallbackName = "") {
 // UTILITY FUNCTIONS
 // ========================================
 
-function ensureArray(value) {
+function ensureArray(value: unknown): unknown[] {
   if (value === undefined || value === null) {
     return [];
   }
@@ -1988,7 +2209,7 @@ function ensureArray(value) {
   return Array.isArray(value) ? value : [value];
 }
 
-function extractMessage(message) {
+function extractMessage(message: unknown): string {
   if (!message) {
     return "";
   }
@@ -2005,11 +2226,12 @@ function extractMessage(message) {
   }
 
   if (typeof message === "object") {
-    if (typeof message._ === "string") {
-      return message._.trim();
+    const obj = message as Record<string, unknown>;
+    if (typeof obj._ === "string") {
+      return obj._.trim();
     }
 
-    return Object.values(message)
+    return Object.values(obj)
       .map((value) => extractMessage(value))
       .filter(Boolean)
       .join(" ");
@@ -2018,7 +2240,9 @@ function extractMessage(message) {
   return String(message).trim();
 }
 
-export function escapeXml(value) {
+export function escapeXml(
+  value: string | number | boolean | null | undefined
+): string {
   if (value === undefined || value === null) {
     return "";
   }
@@ -2031,23 +2255,36 @@ export function escapeXml(value) {
     .replace(/'/g, "&apos;");
 }
 
-function createCommandError(normalized) {
+interface EppCommandErrorLike extends Error {
+  name: "EppCommandError";
+  code: number | null;
+  response: CommandResult;
+}
+
+function createCommandError(normalized: CommandResult): EppCommandErrorLike {
   const message = normalized.resultMessage || "EPP command failed.";
-  const error = new Error(message);
+  const error = new Error(message) as EppCommandErrorLike;
   error.name = "EppCommandError";
   error.code = normalized.resultCode ?? null;
   error.response = normalized;
   return error;
 }
 
-function normalizeError(value, fallbackMessage = "Unexpected error.") {
+interface ErrorWithDetails extends Error {
+  details?: unknown;
+}
+
+function normalizeError(
+  value: unknown,
+  fallbackMessage: string = "Unexpected error."
+): Error {
   if (value instanceof Error) {
     return value;
   }
 
   const message =
     typeof value === "string" && value.length > 0 ? value : fallbackMessage;
-  const error = new Error(message);
+  const error = new Error(message) as ErrorWithDetails;
 
   if (value && typeof value === "object") {
     error.details = value;

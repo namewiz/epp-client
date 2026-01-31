@@ -2,8 +2,8 @@
 import { Command } from "commander";
 import "dotenv/config.js";
 import { readFile } from "node:fs/promises";
-import EppClient, { EppClientConfig } from "../lib/index.js";
-import { loadConfig, validateRequiredEnv } from "./config.js";
+import EppClient, { EppClientConfig, type CommandResult } from "../lib/index.js";
+import { loadConfig, validateRequiredEnv, type CliFlags } from "./config.js";
 import { logger } from "./logger.js";
 
 const program = new Command();
@@ -11,7 +11,7 @@ const program = new Command();
 /**
  * Parse comma-separated values into an array
  */
-function parseList(value) {
+function parseList(value: string): string[] {
   return value
     .split(",")
     .map((s) => s.trim())
@@ -21,8 +21,8 @@ function parseList(value) {
 /**
  * Create and connect EPP client, execute action, then disconnect
  */
-async function withClient(action) {
-  const globalOpts = program.opts();
+async function withClient<T>(action: (client: EppClient) => Promise<T>): Promise<void> {
+  const globalOpts = program.opts<CliFlags>();
 
   // Set logger verbosity
   if (globalOpts.verbose) {
@@ -46,20 +46,20 @@ async function withClient(action) {
       port: config.port,
       rejectUnauthorized: config.rejectUnauthorized,
       defaultTimeout: config.timeout,
-    }),
+    })
   );
 
   // Setup verbose event listeners
   if (globalOpts.verbose) {
     client.on("connect", () => logger.verbose("Connected to EPP server"));
-    client.on("greeting", (msg) =>
-      logger.verbose("Received greeting:", msg.data?.svID),
+    client.on("greeting", (msg: CommandResult) =>
+      logger.verbose("Received greeting:", (msg.data as { svID?: string })?.svID)
     );
-    client.on("sent", ({ xml }) => logger.verbose("Sent:", xml));
-    client.on("received", ({ xml }) => logger.verbose("Received:", xml));
-    client.on("error", (err) => logger.error("Client error:", err.message));
-    client.on("close", (err) =>
-      logger.verbose("Connection closed:", err?.message || "Clean disconnect"),
+    client.on("sent", ({ xml }: { xml: string }) => logger.verbose("Sent:", xml));
+    client.on("received", ({ xml }: { xml: string }) => logger.verbose("Received:", xml));
+    client.on("error", (err: Error) => logger.error("Client error:", err.message));
+    client.on("close", (err: Error | undefined) =>
+      logger.verbose("Connection closed:", err?.message || "Clean disconnect")
     );
   }
 
@@ -105,13 +105,16 @@ async function withClient(action) {
     await client.disconnect();
     logger.success("Disconnected");
   } catch (error) {
-    logger.error("Command failed:", error.message);
-    if (error.code) logger.error("Error code:", error.code);
+    const err = error as Error & { code?: number };
+    logger.error("Command failed:", err.message);
+    if (err.code) logger.error("Error code:", err.code);
     if (process.env.DEBUG) console.error(error);
     try {
       await client.logout();
       await client.disconnect();
-    } catch { }
+    } catch {
+      // Ignore cleanup errors
+    }
     process.exit(1);
   }
 }
@@ -137,15 +140,16 @@ program
   .alias("check")
   .description("Check if a domain is available for registration")
   .argument("<domain>", "Domain name to check")
-  .action(async (domain) => {
+  .action(async (domain: string) => {
     await withClient(async (client) => {
       const result = await client.checkDomain({ name: domain });
       if (result instanceof Error) throw result;
+      const checkResult = Array.isArray(result) ? result[0]! : result;
       return {
         domain,
-        available: result.availability === "unregistered",
-        status: result.availability,
-        reason: result.reason || null,
+        available: checkResult.availability === "unregistered",
+        status: checkResult.availability,
+        reason: checkResult.reason || null,
       };
     });
   });
@@ -156,7 +160,7 @@ program
   .alias("info")
   .description("Get detailed information about a domain")
   .argument("<domain>", "Domain name to query")
-  .action(async (domain) => {
+  .action(async (domain: string) => {
     await withClient(async (client) => {
       const result = await client.infoDomain({ name: domain });
       if (result instanceof Error) throw result;
@@ -183,7 +187,7 @@ program
   .option("--ns <nameservers>", "Comma-separated nameservers")
   .option("--period <years>", "Registration period in years", "1")
   .option("--auth <password>", "Authorization password", "changeme")
-  .action(async (domain, options) => {
+  .action(async (domain: string, options: { registrant: string; ns?: string; period: string; auth: string }) => {
     await withClient(async (client) => {
       const result = await client.createDomain({
         name: domain,
@@ -216,34 +220,50 @@ program
   .option("--state <state>", "State/province")
   .option("--postcode <code>", "Postal code")
   .option("--auth <password>", "Authorization password", "changeme")
-  .action(async (id, options) => {
-    await withClient(async (client) => {
-      const result = await client.createContact({
-        id,
-        name: options.name,
-        email: options.email,
-        city: options.city,
-        country: options.country,
-        organisation: options.org,
-        addressLines: options.address
-          ? options.address
-            .split("|")
-            .map((l) => l.trim())
-            .filter(Boolean)
-          : [],
-        state: options.state,
-        postcode: options.postcode,
-        phone: options.phone,
-        authInfo: options.auth,
+  .action(
+    async (
+      id: string,
+      options: {
+        name: string;
+        email: string;
+        city: string;
+        country: string;
+        address: string;
+        phone: string;
+        org?: string;
+        state?: string;
+        postcode?: string;
+        auth: string;
+      }
+    ) => {
+      await withClient(async (client) => {
+        const result = await client.createContact({
+          id,
+          name: options.name,
+          email: options.email,
+          city: options.city,
+          country: options.country,
+          organisation: options.org,
+          addressLines: options.address
+            ? options.address
+                .split("|")
+                .map((l) => l.trim())
+                .filter(Boolean)
+            : [],
+          state: options.state,
+          postcode: options.postcode,
+          phone: options.phone,
+          authInfo: options.auth,
+        });
+        if (result instanceof Error) throw result;
+        return {
+          success: true,
+          contactId: id,
+          message: "Contact created successfully",
+        };
       });
-      if (result instanceof Error) throw result;
-      return {
-        success: true,
-        contactId: id,
-        message: "Contact created successfully",
-      };
-    });
-  });
+    }
+  );
 
 // update-domain command
 program
@@ -257,40 +277,52 @@ program
   .option("--remove-status <status>", "Remove status (comma-separated)")
   .option("--registrant <id>", "Change registrant contact")
   .option("--auth <password>", "Change authorization password")
-  .action(async (domain, options) => {
-    const add = {};
-    const remove = {};
-    const change = {};
+  .action(
+    async (
+      domain: string,
+      options: {
+        addNs?: string;
+        removeNs?: string;
+        addStatus?: string;
+        removeStatus?: string;
+        registrant?: string;
+        auth?: string;
+      }
+    ) => {
+      const add: { nameservers?: string[]; status?: string[] } = {};
+      const remove: { nameservers?: string[]; status?: string[] } = {};
+      const change: { registrant?: string; authInfo?: string } = {};
 
-    if (options.addNs) add.nameservers = parseList(options.addNs);
-    if (options.addStatus) add.status = parseList(options.addStatus);
-    if (options.removeNs) remove.nameservers = parseList(options.removeNs);
-    if (options.removeStatus) remove.status = parseList(options.removeStatus);
-    if (options.registrant) change.registrant = options.registrant;
-    if (options.auth) change.authInfo = options.auth;
+      if (options.addNs) add.nameservers = parseList(options.addNs);
+      if (options.addStatus) add.status = parseList(options.addStatus);
+      if (options.removeNs) remove.nameservers = parseList(options.removeNs);
+      if (options.removeStatus) remove.status = parseList(options.removeStatus);
+      if (options.registrant) change.registrant = options.registrant;
+      if (options.auth) change.authInfo = options.auth;
 
-    if (
-      Object.keys(add).length === 0 &&
-      Object.keys(remove).length === 0 &&
-      Object.keys(change).length === 0
-    ) {
-      logger.error(
-        "At least one update operation is required (--add-ns, --remove-ns, --add-status, etc.)",
-      );
-      process.exit(1);
-    }
+      if (
+        Object.keys(add).length === 0 &&
+        Object.keys(remove).length === 0 &&
+        Object.keys(change).length === 0
+      ) {
+        logger.error(
+          "At least one update operation is required (--add-ns, --remove-ns, --add-status, etc.)"
+        );
+        process.exit(1);
+      }
 
-    await withClient(async (client) => {
-      const result = await client.updateDomain({
-        name: domain,
-        add: Object.keys(add).length > 0 ? add : undefined,
-        remove: Object.keys(remove).length > 0 ? remove : undefined,
-        change: Object.keys(change).length > 0 ? change : undefined,
+      await withClient(async (client) => {
+        const result = await client.updateDomain({
+          name: domain,
+          add: Object.keys(add).length > 0 ? add : undefined,
+          remove: Object.keys(remove).length > 0 ? remove : undefined,
+          change: Object.keys(change).length > 0 ? change : undefined,
+        });
+        if (result instanceof Error) throw result;
+        return { success: true, domain, message: "Domain updated successfully" };
       });
-      if (result instanceof Error) throw result;
-      return { success: true, domain, message: "Domain updated successfully" };
-    });
-  });
+    }
+  );
 
 // update-nameservers command
 program
@@ -298,7 +330,7 @@ program
   .description("Replace all nameservers for a domain")
   .argument("<domain>", "Domain name")
   .requiredOption("--ns <nameservers>", "Comma-separated nameservers")
-  .action(async (domain, options) => {
+  .action(async (domain: string, options: { ns: string }) => {
     const nameservers = parseList(options.ns);
     await withClient(async (client) => {
       const result = await client.updateNameservers({
@@ -322,7 +354,7 @@ program
   .argument("<domain>", "Domain name")
   .option("--enable", "Enable auto-renewal")
   .option("--disable", "Disable auto-renewal")
-  .action(async (domain, options) => {
+  .action(async (domain: string, options: { enable?: boolean; disable?: boolean }) => {
     if (!options.enable && !options.disable) {
       logger.error("Either --enable or --disable is required");
       process.exit(1);
@@ -347,8 +379,8 @@ program
   .description("Send a custom EPP XML command")
   .option("--xml <xml>", "XML command string")
   .option("--file <path>", "Read XML from file")
-  .action(async (options) => {
-    let xml;
+  .action(async (options: { xml?: string; file?: string }) => {
+    let xml: string;
     if (options.xml) {
       xml = options.xml;
     } else if (options.file) {
@@ -358,7 +390,7 @@ program
       process.exit(1);
     }
 
-    const globalOpts = program.opts();
+    const globalOpts = program.opts<CliFlags>();
     await withClient(async (client) => {
       const result = await client.sendCommand(xml, {
         timeout: globalOpts.timeout
@@ -397,14 +429,15 @@ program
   .command("check-contact")
   .description("Check if a contact ID is available")
   .argument("<id>", "Contact ID to check")
-  .action(async (id) => {
+  .action(async (id: string) => {
     await withClient(async (client) => {
       const result = await client.checkContact({ id });
       if (result instanceof Error) throw result;
+      const checkResult = Array.isArray(result) ? result[0]! : result;
       return {
         id,
-        available: result.available,
-        reason: result.reason || null,
+        available: checkResult.available,
+        reason: checkResult.reason || null,
       };
     });
   });
@@ -414,7 +447,7 @@ program
   .command("info-contact")
   .description("Get detailed information about a contact")
   .argument("<id>", "Contact ID to query")
-  .action(async (id) => {
+  .action(async (id: string) => {
     await withClient(async (client) => {
       const result = await client.infoContact({ id });
       if (result instanceof Error) throw result;
@@ -455,56 +488,85 @@ program
   .option("--auth <password>", "Change authorization password")
   .option("--add-status <status>", "Add status (comma-separated)")
   .option("--remove-status <status>", "Remove status (comma-separated)")
-  .action(async (id, options) => {
-    const add = {};
-    const remove = {};
-    const change = {};
+  .action(
+    async (
+      id: string,
+      options: {
+        name?: string;
+        org?: string;
+        email?: string;
+        phone?: string;
+        address?: string;
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+        auth?: string;
+        addStatus?: string;
+        removeStatus?: string;
+      }
+    ) => {
+      const add: { status?: string[] } = {};
+      const remove: { status?: string[] } = {};
+      const change: {
+        name?: string;
+        organisation?: string;
+        email?: string;
+        phone?: string;
+        addressLines?: string[];
+        city?: string;
+        state?: string;
+        postcode?: string;
+        country?: string;
+        authInfo?: string;
+      } = {};
 
-    if (options.addStatus) add.status = parseList(options.addStatus);
-    if (options.removeStatus) remove.status = parseList(options.removeStatus);
-    if (options.name) change.name = options.name;
-    if (options.org) change.organisation = options.org;
-    if (options.email) change.email = options.email;
-    if (options.phone) change.phone = options.phone;
-    if (options.address) {
-      change.addressLines = options.address
-        .split("|")
-        .map((l) => l.trim())
-        .filter(Boolean);
-    }
-    if (options.city) change.city = options.city;
-    if (options.state) change.state = options.state;
-    if (options.postcode) change.postcode = options.postcode;
-    if (options.country) change.country = options.country;
-    if (options.auth) change.authInfo = options.auth;
+      if (options.addStatus) add.status = parseList(options.addStatus);
+      if (options.removeStatus) remove.status = parseList(options.removeStatus);
+      if (options.name) change.name = options.name;
+      if (options.org) change.organisation = options.org;
+      if (options.email) change.email = options.email;
+      if (options.phone) change.phone = options.phone;
+      if (options.address) {
+        change.addressLines = options.address
+          .split("|")
+          .map((l) => l.trim())
+          .filter(Boolean);
+      }
+      if (options.city) change.city = options.city;
+      if (options.state) change.state = options.state;
+      if (options.postcode) change.postcode = options.postcode;
+      if (options.country) change.country = options.country;
+      if (options.auth) change.authInfo = options.auth;
 
-    if (
-      Object.keys(add).length === 0 &&
-      Object.keys(remove).length === 0 &&
-      Object.keys(change).length === 0
-    ) {
-      logger.error("At least one update operation is required");
-      process.exit(1);
-    }
+      if (
+        Object.keys(add).length === 0 &&
+        Object.keys(remove).length === 0 &&
+        Object.keys(change).length === 0
+      ) {
+        logger.error("At least one update operation is required");
+        process.exit(1);
+      }
 
-    await withClient(async (client) => {
-      const result = await client.updateContact({
-        id,
-        add: Object.keys(add).length > 0 ? add : undefined,
-        remove: Object.keys(remove).length > 0 ? remove : undefined,
-        change: Object.keys(change).length > 0 ? change : undefined,
+      await withClient(async (client) => {
+        const result = await client.updateContact({
+          id,
+          add: Object.keys(add).length > 0 ? add : undefined,
+          remove: Object.keys(remove).length > 0 ? remove : undefined,
+          change: Object.keys(change).length > 0 ? change : undefined,
+        });
+        if (result instanceof Error) throw result;
+        return { success: true, id, message: "Contact updated successfully" };
       });
-      if (result instanceof Error) throw result;
-      return { success: true, id, message: "Contact updated successfully" };
-    });
-  });
+    }
+  );
 
 // delete-contact command
 program
   .command("delete-contact")
   .description("Delete a contact")
   .argument("<id>", "Contact ID to delete")
-  .action(async (id) => {
+  .action(async (id: string) => {
     await withClient(async (client) => {
       const result = await client.deleteContact({ id });
       if (result instanceof Error) throw result;
@@ -517,7 +579,7 @@ program
   .command("delete-domain")
   .description("Delete a domain")
   .argument("<domain>", "Domain name to delete")
-  .action(async (domain) => {
+  .action(async (domain: string) => {
     await withClient(async (client) => {
       const result = await client.deleteDomain({ name: domain });
       if (result instanceof Error) throw result;
@@ -533,7 +595,7 @@ program
   .argument("<domain>", "Domain name to renew")
   .requiredOption("--expiry <date>", "Current expiry date (YYYY-MM-DD)")
   .option("--period <years>", "Renewal period in years", "1")
-  .action(async (domain, options) => {
+  .action(async (domain: string, options: { expiry: string; period: string }) => {
     await withClient(async (client) => {
       const result = await client.renewDomain({
         name: domain,
@@ -558,7 +620,7 @@ program
   .argument("<domain>", "Domain name to transfer")
   .requiredOption("--auth <password>", "Authorization password for transfer")
   .option("--period <years>", "Transfer period in years")
-  .action(async (domain, options) => {
+  .action(async (domain: string, options: { auth: string; period?: string }) => {
     await withClient(async (client) => {
       const result = await client.transferDomain({
         name: domain,
@@ -585,7 +647,7 @@ program
   .description("Query the status of a domain transfer")
   .argument("<domain>", "Domain name to query transfer status")
   .option("--auth <password>", "Authorization password")
-  .action(async (domain, options) => {
+  .action(async (domain: string, options: { auth?: string }) => {
     await withClient(async (client) => {
       const result = await client.queryTransfer({
         name: domain,
@@ -607,7 +669,7 @@ program
   .description("Approve a pending domain transfer")
   .argument("<domain>", "Domain name")
   .option("--auth <password>", "Authorization password")
-  .action(async (domain, options) => {
+  .action(async (domain: string, options: { auth?: string }) => {
     await withClient(async (client) => {
       const result = await client.approveTransfer({
         name: domain,
@@ -628,7 +690,7 @@ program
   .description("Reject a pending domain transfer")
   .argument("<domain>", "Domain name")
   .option("--auth <password>", "Authorization password")
-  .action(async (domain, options) => {
+  .action(async (domain: string, options: { auth?: string }) => {
     await withClient(async (client) => {
       const result = await client.rejectTransfer({
         name: domain,
@@ -649,7 +711,7 @@ program
   .description("Cancel a pending domain transfer request")
   .argument("<domain>", "Domain name")
   .option("--auth <password>", "Authorization password")
-  .action(async (domain, options) => {
+  .action(async (domain: string, options: { auth?: string }) => {
     await withClient(async (client) => {
       const result = await client.cancelTransfer({
         name: domain,
@@ -669,21 +731,36 @@ program
   .command("dump-domains")
   .description("Get detailed information for multiple domains")
   .argument("<domains>", "Comma-separated domain names")
-  .action(async (domains) => {
+  .action(async (domains: string) => {
     const names = parseList(domains);
     await withClient(async (client) => {
-      const result = await client.dumpDomains({ names });
-      if (result instanceof Error) throw result;
-      return result.map((d) => ({
-        name: d.name,
-        registrant: d.registrant,
-        nameservers: d.nameservers,
-        status: d.status,
-        created: d.crDate,
-        updated: d.upDate,
-        expires: d.exDate,
-        registrar: d.clID,
-      }));
+      const results: Array<{
+        name: string;
+        registrant: string;
+        nameservers: string[];
+        status: string[];
+        created: string;
+        updated: string;
+        expires: string;
+        registrar: string;
+      }> = [];
+
+      for (const name of names) {
+        const result = await client.infoDomain({ name });
+        if (result instanceof Error) throw result;
+        results.push({
+          name: result.name,
+          registrant: result.registrant,
+          nameservers: result.nameservers,
+          status: result.status,
+          created: result.crDate,
+          updated: result.upDate,
+          expires: result.exDate,
+          registrar: result.clID,
+        });
+      }
+
+      return results;
     });
   });
 
@@ -712,7 +789,7 @@ program
   .command("poll-ack")
   .description("Acknowledge a poll message")
   .argument("<messageId>", "Message ID to acknowledge")
-  .action(async (messageId) => {
+  .action(async (messageId: string) => {
     await withClient(async (client) => {
       const result = await client.pollAck({ messageId });
       if (result instanceof Error) throw result;
@@ -730,14 +807,15 @@ program
   .command("check-host")
   .description("Check if a host name is available")
   .argument("<name>", "Host name to check (e.g., ns1.example.com)")
-  .action(async (name) => {
+  .action(async (name: string) => {
     await withClient(async (client) => {
       const result = await client.checkHost({ name });
       if (result instanceof Error) throw result;
+      const checkResult = Array.isArray(result) ? result[0]! : result;
       return {
         name,
-        available: result.available,
-        reason: result.reason || null,
+        available: checkResult.available,
+        reason: checkResult.reason || null,
       };
     });
   });
@@ -748,11 +826,11 @@ program
   .description("Create a new host (nameserver)")
   .argument("<name>", "Host name (e.g., ns1.example.com)")
   .option("--ip <addresses>", "Comma-separated IP addresses")
-  .action(async (name, options) => {
+  .action(async (name: string, options: { ip?: string }) => {
     const addresses = options.ip
       ? parseList(options.ip).map((addr) => ({
           address: addr,
-          ip: addr.includes(":") ? "v6" : "v4",
+          ip: (addr.includes(":") ? "v6" : "v4") as "v4" | "v6",
         }))
       : [];
 
@@ -768,7 +846,7 @@ program
   .command("info-host")
   .description("Get detailed information about a host")
   .argument("<name>", "Host name to query")
-  .action(async (name) => {
+  .action(async (name: string) => {
     await withClient(async (client) => {
       const result = await client.infoHost({ name });
       if (result instanceof Error) throw result;
@@ -794,54 +872,65 @@ program
   .option("--add-status <status>", "Add status (comma-separated)")
   .option("--remove-status <status>", "Remove status (comma-separated)")
   .option("--new-name <name>", "Change host name")
-  .action(async (name, options) => {
-    const add = {};
-    const remove = {};
-    const change = {};
+  .action(
+    async (
+      name: string,
+      options: {
+        addIp?: string;
+        removeIp?: string;
+        addStatus?: string;
+        removeStatus?: string;
+        newName?: string;
+      }
+    ) => {
+      const add: { addresses?: Array<{ address: string; ip: "v4" | "v6" }>; status?: string[] } = {};
+      const remove: { addresses?: Array<{ address: string; ip: "v4" | "v6" }>; status?: string[] } = {};
+      const change: { name?: string } = {};
 
-    if (options.addIp) {
-      add.addresses = parseList(options.addIp).map((addr) => ({
-        address: addr,
-        ip: addr.includes(":") ? "v6" : "v4",
-      }));
-    }
-    if (options.removeIp) {
-      remove.addresses = parseList(options.removeIp).map((addr) => ({
-        address: addr,
-        ip: addr.includes(":") ? "v6" : "v4",
-      }));
-    }
-    if (options.addStatus) add.status = parseList(options.addStatus);
-    if (options.removeStatus) remove.status = parseList(options.removeStatus);
-    if (options.newName) change.name = options.newName;
+      if (options.addIp) {
+        add.addresses = parseList(options.addIp).map((addr) => ({
+          address: addr,
+          ip: (addr.includes(":") ? "v6" : "v4") as "v4" | "v6",
+        }));
+      }
+      if (options.removeIp) {
+        remove.addresses = parseList(options.removeIp).map((addr) => ({
+          address: addr,
+          ip: (addr.includes(":") ? "v6" : "v4") as "v4" | "v6",
+        }));
+      }
+      if (options.addStatus) add.status = parseList(options.addStatus);
+      if (options.removeStatus) remove.status = parseList(options.removeStatus);
+      if (options.newName) change.name = options.newName;
 
-    if (
-      Object.keys(add).length === 0 &&
-      Object.keys(remove).length === 0 &&
-      Object.keys(change).length === 0
-    ) {
-      logger.error("At least one update operation is required");
-      process.exit(1);
-    }
+      if (
+        Object.keys(add).length === 0 &&
+        Object.keys(remove).length === 0 &&
+        Object.keys(change).length === 0
+      ) {
+        logger.error("At least one update operation is required");
+        process.exit(1);
+      }
 
-    await withClient(async (client) => {
-      const result = await client.updateHost({
-        name,
-        add: Object.keys(add).length > 0 ? add : undefined,
-        remove: Object.keys(remove).length > 0 ? remove : undefined,
-        change: Object.keys(change).length > 0 ? change : undefined,
+      await withClient(async (client) => {
+        const result = await client.updateHost({
+          name,
+          add: Object.keys(add).length > 0 ? add : undefined,
+          remove: Object.keys(remove).length > 0 ? remove : undefined,
+          change: Object.keys(change).length > 0 ? change : undefined,
+        });
+        if (result instanceof Error) throw result;
+        return { success: true, name, message: "Host updated successfully" };
       });
-      if (result instanceof Error) throw result;
-      return { success: true, name, message: "Host updated successfully" };
-    });
-  });
+    }
+  );
 
 // delete-host command
 program
   .command("delete-host")
   .description("Delete a host")
   .argument("<name>", "Host name to delete")
-  .action(async (name) => {
+  .action(async (name: string) => {
     await withClient(async (client) => {
       const result = await client.deleteHost({ name });
       if (result instanceof Error) throw result;

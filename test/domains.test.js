@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import EppClient from "../src/index.js";
+import EppClient from "../dist/index.js";
 
 const host = process.env.EPP_HOST;
 
@@ -75,7 +75,7 @@ describe("Domain Commands", () => {
 
       const result = await client.infoDomain({ name: "example.com" });
       assert.equal(result.name, "example.com");
-      assert.equal(result.registrantId, "jd1234");
+      assert.equal(result.registrant, "jd1234");
     });
   });
 

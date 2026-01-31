@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import EppClient from "../src/index.js";
+import EppClient from "../dist/index.js";
 
 describe("Poll Commands", () => {
   describe("pollRequest", () => {
@@ -30,7 +30,7 @@ describe("Poll Commands", () => {
       const result = await client.pollRequest();
       assert.match(sentXml, /<poll op="req"\/>/);
       assert.equal(result.success, true);
-      assert.equal(result.messageCount, 5);
+      assert.equal(result.count, 5);
       assert.equal(result.messageId, "msg-123");
     });
 
@@ -45,7 +45,7 @@ describe("Poll Commands", () => {
 
       const result = await client.pollRequest();
       assert.equal(result.success, true);
-      assert.equal(result.messageCount, 0);
+      assert.equal(result.count, 0);
     });
   });
 
@@ -64,7 +64,7 @@ describe("Poll Commands", () => {
       const result = await client.pollAck({ messageId: "msg-123" });
       assert.match(sentXml, /<poll op="ack" msgID="msg-123"\/>/);
       assert.equal(result.success, true);
-      assert.equal(result.remainingMessages, 4);
+      assert.equal(result.count, 4);
     });
 
     test("requires messageId parameter", async () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import EppClient from "../src/index.js";
+import EppClient from "../dist/index.js";
 
 describe("Domain Transfer Commands", () => {
   describe("transferDomain", () => {
