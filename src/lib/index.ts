@@ -185,6 +185,7 @@ export class EppClient extends EventEmitter {
   private _socket: TLSSocket | null = null;
   private _buffer: Buffer = Buffer.alloc(0);
   private _pending: Map<string, SettleFunction> = new Map();
+  private _pendingHello: SettleFunction[] = [];
   private _connected: boolean = false;
   private _transactionIdCounter: number = 0;
 
@@ -317,13 +318,35 @@ export class EppClient extends EventEmitter {
       return connectivityError;
     }
 
-    const prepared = this._prepareCommand(xml, transactionId);
+    // <hello/> carries no clTRID and no <command> wrapper per RFC 5730, so it
+    // must skip clTRID injection and be matched against the server's
+    // <greeting/> reply instead of a transaction id.
+    const isHello = /<hello\s*\/?>/i.test(xml);
 
-    if (prepared instanceof Error) {
-      return prepared;
+    let preparedXml: string;
+    let preparedTransactionId: string;
+
+    if (isHello) {
+      const trimmed = typeof xml === "string" ? xml.trim() : "";
+
+      if (!trimmed) {
+        return new Error("An XML payload is required.");
+      }
+
+      preparedXml = trimmed;
+      preparedTransactionId = transactionId ?? this._nextTransactionId();
+    } else {
+      const prepared = this._prepareCommand(xml, transactionId);
+
+      if (prepared instanceof Error) {
+        return prepared;
+      }
+
+      preparedXml = prepared.xml;
+      preparedTransactionId = prepared.transactionId;
     }
 
-    const payload = Buffer.from(prepared.xml.trim(), "utf8");
+    const payload = Buffer.from(preparedXml.trim(), "utf8");
     const header = Buffer.allocUnsafe(4);
     header.writeUInt32BE(payload.length + 4, 0);
     const message = Buffer.concat([header, payload]);
@@ -343,15 +366,30 @@ export class EppClient extends EventEmitter {
         resolve(outcome);
       };
 
+      const removePending = (): void => {
+        if (isHello) {
+          const index = this._pendingHello.indexOf(settle);
+          if (index !== -1) {
+            this._pendingHello.splice(index, 1);
+          }
+        } else {
+          this._pending.delete(preparedTransactionId);
+        }
+      };
+
       const timer =
         timeoutMs > 0
           ? setTimeout(() => {
-              this._pending.delete(prepared.transactionId);
+              removePending();
               settle(new Error(`EPP command timed out after ${timeoutMs}ms.`));
             }, timeoutMs)
           : null;
 
-      this._pending.set(prepared.transactionId, settle);
+      if (isHello) {
+        this._pendingHello.push(settle);
+      } else {
+        this._pending.set(preparedTransactionId, settle);
+      }
 
       try {
         socket.write(message);
@@ -360,14 +398,14 @@ export class EppClient extends EventEmitter {
           clearTimeout(timer);
         }
 
-        this._pending.delete(prepared.transactionId);
+        removePending();
         settle(normalizeError(error, "Failed to send the EPP command."));
         return;
       }
 
       this.emit("sent", {
-        transactionId: prepared.transactionId,
-        xml: prepared.xml.trim(),
+        transactionId: preparedTransactionId,
+        xml: preparedXml.trim(),
       });
     });
   }
@@ -1152,6 +1190,12 @@ export class EppClient extends EventEmitter {
 
     if (normalized.type === "greeting") {
       this.emit("greeting", normalized);
+
+      const settle = this._pendingHello.shift();
+      if (settle) {
+        settle(normalized);
+      }
+
       return null;
     }
 
@@ -1193,7 +1237,7 @@ export class EppClient extends EventEmitter {
       ? normalizeError(error)
       : new Error("EPP connection closed.");
 
-    if (this._pending.size) {
+    if (this._pending.size || this._pendingHello.length) {
       this._resolveAll(reason);
     }
 
@@ -1221,6 +1265,12 @@ export class EppClient extends EventEmitter {
     }
 
     this._pending.clear();
+
+    for (const settle of this._pendingHello) {
+      settle(resolvedOutcome);
+    }
+
+    this._pendingHello.length = 0;
   }
 
   private _ensureConnected(): Error | null {
