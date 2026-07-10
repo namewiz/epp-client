@@ -218,6 +218,17 @@ export class EppClient extends EventEmitter {
     return this._connected;
   }
 
+  /**
+   * Returns true only when the client holds a live, usable TLS socket.
+   * Unlike `isConnected` (a bare connected flag), this also verifies the
+   * underlying socket exists and has not been destroyed — the signal a
+   * connection pool needs to decide whether it can reuse the socket or must
+   * reconnect + re-login. See RestEpp warm-pool design (§7).
+   */
+  isAlive(): boolean {
+    return this._connected && this._socket !== null && !this._socket.destroyed;
+  }
+
   get config(): EppClientConfig {
     return this._config;
   }

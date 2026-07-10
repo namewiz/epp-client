@@ -1,6 +1,6 @@
 {
   "name": "epp-client",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Modern library and CLI for EPP (Extensible Provisioning Protocol) operations",
   "scripts": {
     "build": "tsc",
