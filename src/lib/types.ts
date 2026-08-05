@@ -370,6 +370,26 @@ export const DomainCheckResultSchema = z.object({
 
 export type DomainCheckResult = z.infer<typeof DomainCheckResultSchema>;
 
+export const SecDnsDsDataSchema = z.object({
+  keyTag: z.number({ invalid_type_error: "Key tag must be a number" })
+    .int({ message: "Key tag must be an integer" })
+    .min(0, { message: "Key tag must be non-negative" })
+    .describe("Key tag of the DNSSEC key"),
+  alg: z.number({ invalid_type_error: "Algorithm must be a number" })
+    .int({ message: "Algorithm must be an integer" })
+    .min(0, { message: "Algorithm must be non-negative" })
+    .describe("DNSSEC algorithm number"),
+  digestType: z.number({ invalid_type_error: "Digest type must be a number" })
+    .int({ message: "Digest type must be an integer" })
+    .min(0, { message: "Digest type must be non-negative" })
+    .describe("Digest algorithm type used to generate the digest"),
+  digest: z.string({ required_error: "Digest is required", invalid_type_error: "Digest must be a string" })
+    .min(1, { message: "Digest is required" })
+    .describe("Hex-encoded digest of the DNSKEY record"),
+});
+
+export type SecDnsDsData = z.infer<typeof SecDnsDsDataSchema>;
+
 export const DomainContactSchema = z.object({
   id: z.string({ required_error: "Contact ID is required", invalid_type_error: "Contact ID must be a string" })
     .describe("Contact ID reference"),
@@ -403,6 +423,9 @@ export const CreateDomainOptionsSchema = SendCommandOptionsSchema.extend({
     .optional(),
   authPassword: z.string({ invalid_type_error: "Auth password must be a string" })
     .describe("Authorization code for domain transfers")
+    .optional(),
+  dsData: z.array(SecDnsDsDataSchema, { invalid_type_error: "dsData must be an array" })
+    .describe("DS records to attach to the domain for DNSSEC (RFC 5910 dsData interface)")
     .optional(),
 });
 
@@ -448,6 +471,8 @@ export const DomainInfoResultSchema = z.object({
     .describe("Domain expiration date"),
   trDate: z.string()
     .describe("Date and time of the last transfer"),
+  dsData: z.array(SecDnsDsDataSchema)
+    .describe("DS records attached to the domain for DNSSEC (empty if unsigned)"),
 });
 
 export type DomainInfoResult = z.infer<typeof DomainInfoResultSchema>;
@@ -465,6 +490,9 @@ export const DomainUpdateAddSchema = z.object({
   )
     .describe("Contact associations to add")
     .optional(),
+  dsData: z.array(SecDnsDsDataSchema, { invalid_type_error: "dsData must be an array" })
+    .describe("DS records to add to the domain for DNSSEC")
+    .optional(),
 });
 
 export type DomainUpdateAdd = z.infer<typeof DomainUpdateAddSchema>;
@@ -481,6 +509,12 @@ export const DomainUpdateRemoveSchema = z.object({
     { invalid_type_error: "Contacts must be an array" }
   )
     .describe("Contact associations to remove")
+    .optional(),
+  dsData: z.array(SecDnsDsDataSchema, { invalid_type_error: "dsData must be an array" })
+    .describe("DS records to remove from the domain")
+    .optional(),
+  dsDataAll: z.boolean({ invalid_type_error: "dsDataAll must be a boolean" })
+    .describe("Remove all DS records from the domain, unsigning it")
     .optional(),
 });
 
@@ -1028,6 +1062,7 @@ export const BuildCreateDomainCommandOptionsSchema = z.object({
   nameservers: z.array(z.string()),
   contacts: z.array(z.union([DomainContactSchema, z.string()])),
   authPassword: z.string(),
+  dsData: z.array(SecDnsDsDataSchema).optional(),
   transactionId: z.string(),
 });
 

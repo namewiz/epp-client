@@ -91,6 +91,7 @@ import type {
   RestoreDomainOptions,
   RestoreDomainResult,
   RestoreReportOptions,
+  SecDnsDsData,
   SendCommandOptions,
   SettleFunction,
   TlsOptions,
@@ -648,6 +649,7 @@ export class EppClient extends EventEmitter {
       nameservers: options.nameservers ?? [],
       contacts: options.contacts ?? [],
       authPassword: options.authPassword ?? "changeme",
+      dsData: options.dsData,
       transactionId: clTRID,
     });
 
@@ -676,7 +678,15 @@ export class EppClient extends EventEmitter {
     const resData = (outcome.data || {}) as Record<string, unknown>;
     const infData = resData["domain:infData"] || resData.infData || {};
 
-    return parseDomainInfo(infData as Record<string, unknown>, options.name);
+    const extension = (outcome.extension || {}) as Record<string, unknown>;
+    const secDnsInfData =
+      extension["secDNS:infData"] || extension.infData || null;
+
+    return parseDomainInfo(
+      infData as Record<string, unknown>,
+      options.name,
+      secDnsInfData as Record<string, unknown> | null
+    );
   }
 
   async updateDomain(options: UpdateDomainOptions): Promise<CommandOutcome> {
@@ -1696,6 +1706,17 @@ ${nameLines}
 </epp>`;
 }
 
+function buildDsDataLines(dsData: SecDnsDsData[], indent: string): string[] {
+  return dsData.flatMap((ds) => [
+    `${indent}<secDNS:dsData>`,
+    `${indent}  <secDNS:keyTag>${escapeXml(ds.keyTag)}</secDNS:keyTag>`,
+    `${indent}  <secDNS:alg>${escapeXml(ds.alg)}</secDNS:alg>`,
+    `${indent}  <secDNS:digestType>${escapeXml(ds.digestType)}</secDNS:digestType>`,
+    `${indent}  <secDNS:digest>${escapeXml(ds.digest)}</secDNS:digest>`,
+    `${indent}</secDNS:dsData>`,
+  ]);
+}
+
 function buildCreateDomainCommand({
   name,
   period,
@@ -1703,6 +1724,7 @@ function buildCreateDomainCommand({
   nameservers,
   contacts,
   authPassword,
+  dsData,
   transactionId,
 }: BuildCreateDomainCommandOptions): string {
   const nameserverLines = (nameservers || [])
@@ -1714,6 +1736,16 @@ function buildCreateDomainCommand({
     const id = typeof contact === "string" ? contact : contact.id;
     return `        <domain:contact type="${escapeXml(type)}">${escapeXml(id)}</domain:contact>`;
   });
+
+  const secDnsBlock = dsData?.length
+    ? [
+        "    <extension>",
+        '      <secDNS:create xmlns:secDNS="urn:ietf:params:xml:ns:secDNS-1.1">',
+        ...buildDsDataLines(dsData, "        "),
+        "      </secDNS:create>",
+        "    </extension>",
+      ]
+    : [];
 
   const lines = [
     XML_HEADER,
@@ -1733,6 +1765,7 @@ function buildCreateDomainCommand({
     "        </domain:authInfo>",
     "      </domain:create>",
     "    </create>",
+    ...secDnsBlock,
     `    <clTRID>${escapeXml(transactionId)}</clTRID>`,
     "  </command>",
     "</epp>",
@@ -1851,6 +1884,36 @@ function buildUpdateDomainCommand({
     chgBlock.push("        </domain:chg>");
   }
 
+  const secDnsRemLines = [
+    ...(remove.dsDataAll ? ["          <secDNS:all>true</secDNS:all>"] : []),
+    ...(remove.dsData?.length ? buildDsDataLines(remove.dsData, "          ") : []),
+  ];
+  const secDnsAddLines = add.dsData?.length
+    ? buildDsDataLines(add.dsData, "          ")
+    : [];
+
+  const secDnsBlock =
+    secDnsRemLines.length || secDnsAddLines.length
+      ? [
+          "    <extension>",
+          '      <secDNS:update xmlns:secDNS="urn:ietf:params:xml:ns:secDNS-1.1">',
+          ...(secDnsRemLines.length
+            ? ["        <secDNS:rem>", ...secDnsRemLines, "        </secDNS:rem>"]
+            : []),
+          ...(secDnsAddLines.length
+            ? ["        <secDNS:add>", ...secDnsAddLines, "        </secDNS:add>"]
+            : []),
+          "      </secDNS:update>",
+          "    </extension>",
+        ]
+      : [];
+
+  const needsChgPlaceholder =
+    secDnsBlock.length > 0 &&
+    addBlock.length === 0 &&
+    remBlock.length === 0 &&
+    chgBlock.length === 0;
+
   const lines = [
     XML_HEADER,
     '<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">',
@@ -1861,8 +1924,10 @@ function buildUpdateDomainCommand({
     ...addBlock,
     ...remBlock,
     ...chgBlock,
+    ...(needsChgPlaceholder ? ["        <domain:chg/>"] : []),
     "      </domain:update>",
     "    </update>",
+    ...secDnsBlock,
     `    <clTRID>${escapeXml(transactionId)}</clTRID>`,
     "  </command>",
     "</epp>",
@@ -2276,9 +2341,25 @@ export function normalizeEppResponse(parsed: EppXmlResponse): CommandResult {
 // PARSING HELPERS
 // ========================================
 
+function parseDsData(secDnsNode: Record<string, unknown> | null | undefined): SecDnsDsData[] {
+  if (!secDnsNode) return [];
+
+  const dsDataNodes = ensureArray(
+    secDnsNode["secDNS:dsData"] || secDnsNode.dsData || []
+  ) as XmlNode[];
+
+  return dsDataNodes.map((ds) => ({
+    keyTag: Number(extractMessage(ds["secDNS:keyTag"] || ds.keyTag)),
+    alg: Number(extractMessage(ds["secDNS:alg"] || ds.alg)),
+    digestType: Number(extractMessage(ds["secDNS:digestType"] || ds.digestType)),
+    digest: extractMessage(ds["secDNS:digest"] || ds.digest),
+  }));
+}
+
 function parseDomainInfo(
   infData: Record<string, unknown>,
-  fallbackName: string = ""
+  fallbackName: string = "",
+  secDnsInfData: Record<string, unknown> | null = null
 ): DomainInfoResult {
   const nsNode = (infData?.["domain:ns"] || infData?.ns || {}) as Record<string, unknown>;
   const hostObj = nsNode["domain:hostObj"] || nsNode.hostObj || [];
@@ -2337,6 +2418,7 @@ function parseDomainInfo(
     upDate: updatedDate,
     exDate: expiryDate,
     trDate: transferDate,
+    dsData: parseDsData(secDnsInfData),
   };
 }
 

@@ -55,6 +55,47 @@ describe("Domain Commands", () => {
         /<domain:hostObj>ns1.example.com<\/domain:hostObj>/,
       );
     });
+
+    test("omits secDNS extension when no dsData given", async () => {
+      const client = new EppClient({});
+      let sentXml = "";
+      client.sendCommand = async (xml) => {
+        sentXml = xml;
+        return { success: true };
+      };
+
+      await client.createDomain({ name: "example.com", registrant: "jd1234" });
+      assert.doesNotMatch(sentXml, /secDNS/);
+    });
+
+    test("includes dsData in secDNS:create extension", async () => {
+      const client = new EppClient({});
+      let sentXml = "";
+      client.sendCommand = async (xml) => {
+        sentXml = xml;
+        return { success: true };
+      };
+
+      await client.createDomain({
+        name: "example.com",
+        registrant: "jd1234",
+        dsData: [
+          { keyTag: 12345, alg: 8, digestType: 2, digest: "49FD46E6C4B45C55D4AC" },
+        ],
+      });
+
+      assert.match(sentXml, /<secDNS:create xmlns:secDNS="urn:ietf:params:xml:ns:secDNS-1.1">/);
+      assert.match(sentXml, /<secDNS:keyTag>12345<\/secDNS:keyTag>/);
+      assert.match(sentXml, /<secDNS:alg>8<\/secDNS:alg>/);
+      assert.match(sentXml, /<secDNS:digestType>2<\/secDNS:digestType>/);
+      assert.match(sentXml, /<secDNS:digest>49FD46E6C4B45C55D4AC<\/secDNS:digest>/);
+
+      const createClose = sentXml.indexOf("</create>");
+      const clTRID = sentXml.indexOf("<clTRID>");
+      const extension = sentXml.indexOf("<extension>");
+      assert.ok(createClose > -1 && extension > createClose);
+      assert.ok(clTRID > -1 && clTRID > extension);
+    });
   });
 
   describe("infoDomain", () => {
@@ -76,6 +117,35 @@ describe("Domain Commands", () => {
       const result = await client.infoDomain({ name: "example.com" });
       assert.equal(result.name, "example.com");
       assert.equal(result.registrant, "jd1234");
+      assert.deepEqual(result.dsData, []);
+    });
+
+    test("parses dsData from secDNS:infData extension", async () => {
+      const client = new EppClient({});
+      client.sendCommand = async () => ({
+        success: true,
+        data: {
+          "domain:infData": {
+            "domain:name": "example.com",
+            "domain:registrant": "jd1234",
+          },
+        },
+        extension: {
+          "secDNS:infData": {
+            "secDNS:dsData": {
+              "secDNS:keyTag": "12345",
+              "secDNS:alg": "8",
+              "secDNS:digestType": "2",
+              "secDNS:digest": "49FD46E6C4B45C55D4AC",
+            },
+          },
+        },
+      });
+
+      const result = await client.infoDomain({ name: "example.com" });
+      assert.deepEqual(result.dsData, [
+        { keyTag: 12345, alg: 8, digestType: 2, digest: "49FD46E6C4B45C55D4AC" },
+      ]);
     });
   });
 
@@ -96,6 +166,80 @@ describe("Domain Commands", () => {
 
       assert.match(sentXml, /<domain:add>/);
       assert.match(sentXml, /<domain:rem>/);
+    });
+
+    test("adds dsData via secDNS:update add", async () => {
+      const client = new EppClient({});
+      let sentXml = "";
+      client.sendCommand = async (xml) => {
+        sentXml = xml;
+        return { success: true };
+      };
+
+      await client.updateDomain({
+        name: "example.com",
+        add: {
+          dsData: [
+            { keyTag: 12345, alg: 8, digestType: 2, digest: "49FD46E6C4B45C55D4AC" },
+          ],
+        },
+      });
+
+      assert.match(sentXml, /<secDNS:update xmlns:secDNS="urn:ietf:params:xml:ns:secDNS-1.1">/);
+      assert.match(sentXml, /<secDNS:add>[\s\S]*<secDNS:keyTag>12345<\/secDNS:keyTag>[\s\S]*<\/secDNS:add>/);
+    });
+
+    test("removes dsData via secDNS:update rem", async () => {
+      const client = new EppClient({});
+      let sentXml = "";
+      client.sendCommand = async (xml) => {
+        sentXml = xml;
+        return { success: true };
+      };
+
+      await client.updateDomain({
+        name: "example.com",
+        remove: {
+          dsData: [
+            { keyTag: 12345, alg: 8, digestType: 2, digest: "49FD46E6C4B45C55D4AC" },
+          ],
+        },
+      });
+
+      assert.match(sentXml, /<secDNS:rem>[\s\S]*<secDNS:keyTag>12345<\/secDNS:keyTag>[\s\S]*<\/secDNS:rem>/);
+    });
+
+    test("removes all dsData via secDNS:all", async () => {
+      const client = new EppClient({});
+      let sentXml = "";
+      client.sendCommand = async (xml) => {
+        sentXml = xml;
+        return { success: true };
+      };
+
+      await client.updateDomain({
+        name: "example.com",
+        remove: { dsDataAll: true },
+      });
+
+      assert.match(sentXml, /<secDNS:rem>\s*<secDNS:all>true<\/secDNS:all>\s*<\/secDNS:rem>/);
+      assert.match(sentXml, /<domain:chg\s*\/>/);
+    });
+
+    test("omits secDNS extension when no dsData given", async () => {
+      const client = new EppClient({});
+      let sentXml = "";
+      client.sendCommand = async (xml) => {
+        sentXml = xml;
+        return { success: true };
+      };
+
+      await client.updateDomain({
+        name: "example.com",
+        add: { nameservers: ["ns3.example.com"] },
+      });
+
+      assert.doesNotMatch(sentXml, /secDNS/);
     });
   });
 

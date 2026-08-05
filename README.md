@@ -150,13 +150,67 @@ All command helpers resolve to either a `CommandResult` on success or an `Error`
 - `login({ username, password, services, extensions, transactionId, timeout })` – authenticate with the registry.
 - `logout({ transactionId, timeout }?)` – end an authenticated session.
 - `checkDomain({ name, transactionId, timeout })` – run a `<domain:check>` command.
-- `createDomain({ name, period, registrant, nameservers, authPassword, transactionId, timeout })` – create a new domain.
+- `createDomain({ name, period, registrant, nameservers, authPassword, dsData, transactionId, timeout })` – create a new domain. `dsData` attaches DS records for DNSSEC.
 - `createContact({ id, name, email, ... })` – create a contact object. See `CreateContactOptions` for full list.
-- `infoDomain({ name, transactionId, timeout })` - retrieve detailed domain information including nameservers and status.
+- `infoDomain({ name, transactionId, timeout })` - retrieve detailed domain information including nameservers, status, and `dsData`.
 - `dumpDomains({ names, transactionId, timeout })` - fetch info payloads for domains under the authenticated user.
-- `updateDomain({ name, add, remove, change, transactionId, timeout })` - send a raw `<domain:update>` command.
+- `updateDomain({ name, add, remove, change, transactionId, timeout })` - send a raw `<domain:update>` command. `add.dsData` / `remove.dsData` / `remove.dsDataAll` manage DNSSEC DS records.
 - `updateNameservers({ name, nameservers, transactionId, timeout })` - helper to update nameservers.
 - `updateAutoRenew({ name, autoRenew, transactionId, timeout })` - helper to enable or disable auto-renewal.
+
+## DNSSEC (secDNS-1.1)
+
+The library supports the DS-data interface of RFC 5910 for attaching, modifying, removing, and reading DS records on domains. `secDNS-1.1` must be enabled at login:
+
+```js
+await client.login({
+  username: process.env.EPP_USERNAME,
+  password: process.env.EPP_PASSWORD,
+  extensions: ['urn:ietf:params:xml:ns:secDNS-1.1'],
+});
+```
+
+Attach DS records when creating a domain:
+
+```js
+await client.createDomain({
+  name: 'example.test',
+  registrant: 'jd1234',
+  dsData: [
+    { keyTag: 12345, alg: 8, digestType: 2, digest: '49FD46E6C4B45C55D4AC...' },
+  ],
+});
+```
+
+Add or remove DS records on an existing domain:
+
+```js
+await client.updateDomain({
+  name: 'example.test',
+  add: { dsData: [{ keyTag: 12345, alg: 8, digestType: 2, digest: '49FD46E6C4B45C55D4AC...' }] },
+});
+
+// Remove specific records
+await client.updateDomain({
+  name: 'example.test',
+  remove: { dsData: [{ keyTag: 12345, alg: 8, digestType: 2, digest: '49FD46E6C4B45C55D4AC...' }] },
+});
+
+// Unsign the domain entirely
+await client.updateDomain({
+  name: 'example.test',
+  remove: { dsDataAll: true },
+});
+```
+
+`infoDomain` returns the current DS records as `dsData` (an empty array for unsigned domains):
+
+```js
+const info = await client.infoDomain({ name: 'example.test' });
+console.log(info.dsData); // [{ keyTag, alg, digestType, digest }, ...]
+```
+
+Only the `dsData` interface is supported (no `keyData`).
 
 ## CommandResult
 
