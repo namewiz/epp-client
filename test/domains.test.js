@@ -96,6 +96,48 @@ describe("Domain Commands", () => {
       assert.ok(createClose > -1 && extension > createClose);
       assert.ok(clTRID > -1 && clTRID > extension);
     });
+
+    test("parses creData dates from response", async () => {
+      const client = new EppClient({});
+      client.sendCommand = async () => ({
+        success: true,
+        resultCode: 1000,
+        resultMessage: "Command completed successfully",
+        data: {
+          "domain:creData": {
+            "domain:name": "example.com",
+            "domain:crDate": "2026-01-01T00:00:00.0Z",
+            "domain:exDate": "2027-01-01T00:00:00.0Z",
+          },
+        },
+      });
+
+      const result = await client.createDomain({ name: "example.com", registrant: "jd1234" });
+      assert.equal(result.success, true);
+      assert.equal(result.resultCode, 1000);
+      assert.equal(result.name, "example.com");
+      assert.equal(result.creationDate, "2026-01-01T00:00:00.0Z");
+      assert.equal(result.expiryDate, "2027-01-01T00:00:00.0Z");
+    });
+
+    test("returns null dates when creData is absent", async () => {
+      const client = new EppClient({});
+      client.sendCommand = async () => ({ success: true });
+
+      const result = await client.createDomain({ name: "example.com", registrant: "jd1234" });
+      assert.equal(result.name, "example.com");
+      assert.equal(result.creationDate, null);
+      assert.equal(result.expiryDate, null);
+    });
+
+    test("propagates command errors", async () => {
+      const client = new EppClient({});
+      client.sendCommand = async () => new Error("Object exists");
+
+      const result = await client.createDomain({ name: "example.com", registrant: "jd1234" });
+      assert.ok(result instanceof Error);
+      assert.equal(result.message, "Object exists");
+    });
   });
 
   describe("infoDomain", () => {

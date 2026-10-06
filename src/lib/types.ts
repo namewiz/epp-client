@@ -431,6 +431,19 @@ export const CreateDomainOptionsSchema = SendCommandOptionsSchema.extend({
 
 export type CreateDomainOptions = z.infer<typeof CreateDomainOptionsSchema>;
 
+export const CreateDomainResultSchema = CommandResultSchema.extend({
+  name: z.string()
+    .describe("Domain name that was created"),
+  creationDate: z.string()
+    .describe("Creation date reported by the registry (domain:crDate)")
+    .nullable(),
+  expiryDate: z.string()
+    .describe("Expiration date reported by the registry (domain:exDate)")
+    .nullable(),
+});
+
+export type CreateDomainResult = z.infer<typeof CreateDomainResultSchema>;
+
 export const InfoDomainOptionsSchema = SendCommandOptionsSchema.extend({
   name: z.string({ required_error: "Domain name is required", invalid_type_error: "Domain name must be a string" })
     .min(1, { message: "Domain name is required" })
@@ -633,6 +646,9 @@ export const TransferDomainResultSchema = z.object({
     .nullable(),
   actionDate: z.string()
     .describe("Date and time of the transfer action")
+    .nullable(),
+  expiryDate: z.string()
+    .describe("Expiration date if the transfer extends the registration period (domain:exDate)")
     .nullable(),
 });
 

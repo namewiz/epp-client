@@ -62,6 +62,7 @@ import type {
   ContactInfoResult,
   CreateContactOptions,
   CreateDomainOptions,
+  CreateDomainResult,
   CreateHostOptions,
   DeleteContactOptions,
   DeleteDomainOptions,
@@ -109,7 +110,7 @@ import type {
 
 // Re-export types
 export type {
-  CheckContactOptions, CheckDomainOptions, CheckHostOptions, CommandOutcome, CommandResult, ContactCheckResult, ContactInfoResult, CreateContactOptions, CreateDomainOptions, CreateHostOptions, DeleteContactOptions, DeleteDomainOptions, DeleteHostOptions, DomainCheckResult, DomainContact, DomainInfoResult, EppClientConfigOptions, HelloOptions, HostAddress, HostCheckResult, HostInfoResult, InfoContactOptions, InfoDomainOptions, InfoHostOptions, LoginOptions,
+  CheckContactOptions, CheckDomainOptions, CheckHostOptions, CommandOutcome, CommandResult, ContactCheckResult, ContactInfoResult, CreateContactOptions, CreateDomainOptions, CreateDomainResult, CreateHostOptions, DeleteContactOptions, DeleteDomainOptions, DeleteHostOptions, DomainCheckResult, DomainContact, DomainInfoResult, EppClientConfigOptions, HelloOptions, HostAddress, HostCheckResult, HostInfoResult, InfoContactOptions, InfoDomainOptions, InfoHostOptions, LoginOptions,
   LogoutOptions, PollAckOptions,
   PollAckResult, PollRequestOptions,
   PollRequestResult, RenewDomainOptions,
@@ -637,7 +638,7 @@ export class EppClient extends EventEmitter {
     return Array.isArray(options.name) ? results : results[0]!;
   }
 
-  async createDomain(options: CreateDomainOptions): Promise<CommandOutcome> {
+  async createDomain(options: CreateDomainOptions): Promise<CreateDomainResult | Error> {
     const validationError = validateSchema(CreateDomainOptionsSchema, options, "Create domain validation failed");
     if (validationError) return validationError;
 
@@ -653,7 +654,21 @@ export class EppClient extends EventEmitter {
       transactionId: clTRID,
     });
 
-    return this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
+    const outcome = await this.sendCommand(xml, { transactionId: clTRID, timeout: options.timeout });
+
+    if (outcome instanceof Error) {
+      return outcome;
+    }
+
+    const resData = (outcome.data || {}) as Record<string, unknown>;
+    const creData = (resData["domain:creData"] || resData.creData || {}) as Record<string, unknown>;
+
+    return {
+      ...outcome,
+      name: extractMessage(creData["domain:name"] || creData.name) || options.name,
+      creationDate: extractMessage(creData["domain:crDate"] || creData.crDate) || null,
+      expiryDate: extractMessage(creData["domain:exDate"] || creData.exDate) || null,
+    };
   }
 
   async infoDomain(options: InfoDomainOptions): Promise<DomainInfoResult | Error> {
@@ -784,6 +799,8 @@ export class EppClient extends EventEmitter {
         extractMessage(trnData["domain:acID"] || trnData.acID) || null,
       actionDate:
         extractMessage(trnData["domain:acDate"] || trnData.acDate) || null,
+      expiryDate:
+        extractMessage(trnData["domain:exDate"] || trnData.exDate) || null,
     };
   }
 

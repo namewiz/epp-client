@@ -150,7 +150,9 @@ All command helpers resolve to either a `CommandResult` on success or an `Error`
 - `login({ username, password, services, extensions, transactionId, timeout })` – authenticate with the registry.
 - `logout({ transactionId, timeout }?)` – end an authenticated session.
 - `checkDomain({ name, transactionId, timeout })` – run a `<domain:check>` command.
-- `createDomain({ name, period, registrant, nameservers, authPassword, dsData, transactionId, timeout })` – create a new domain. `dsData` attaches DS records for DNSSEC.
+- `createDomain({ name, period, registrant, nameservers, authPassword, dsData, transactionId, timeout })` – create a new domain. `dsData` attaches DS records for DNSSEC. Resolves with the `CommandResult` plus parsed `name`, `creationDate` and `expiryDate` from `<domain:creData>`.
+- `transferDomain({ name, authInfo, period, transactionId, timeout })` – request a domain transfer. Resolves with the parsed `<domain:trnData>` (`transferStatus`, `requestingRegistrar`, `requestDate`, `actionRegistrar`, `actionDate`, `expiryDate`).
+- `restoreDomain({ name, transactionId, timeout })` – request an RGP restore (RFC 3915) of a domain in redemption. `restoreReport({ ... })` submits the follow-up restore report.
 - `createContact({ id, name, email, ... })` – create a contact object. See `CreateContactOptions` for full list.
 - `infoDomain({ name, transactionId, timeout })` - retrieve detailed domain information including nameservers, status, and `dsData`.
 - `dumpDomains({ names, transactionId, timeout })` - fetch info payloads for domains under the authenticated user.
