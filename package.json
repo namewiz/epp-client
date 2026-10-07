@@ -1,9 +1,10 @@
 {
   "name": "epp-client",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Modern library and CLI for EPP (Extensible Provisioning Protocol) operations",
   "scripts": {
     "build": "tsc",
+    "prepack": "npm run build",
     "build:bundle": "esbuild dist/index.js --bundle --minify --outfile=dist/bundle.js --platform=node --format=esm",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --env-file=.env.test --test test/*.test.js",
