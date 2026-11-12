@@ -253,6 +253,16 @@ export class EppClient extends EventEmitter {
 
     return new Promise((resolve) => {
       const socket = tlsConnect(this._config.toTlsOptions());
+      const timeoutMs = this._config.defaultTimeout;
+      // A registry that accepts TCP but never finishes the TLS handshake would otherwise hang connect() forever.
+      const timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              cleanup();
+              socket.destroy();
+              resolve(new Error(`Timed out connecting to the EPP server after ${timeoutMs}ms.`));
+            }, timeoutMs)
+          : null;
 
       const handleError = (error: Error): void => {
         cleanup();
@@ -275,6 +285,9 @@ export class EppClient extends EventEmitter {
       };
 
       const cleanup = (): void => {
+        if (timer) {
+          clearTimeout(timer);
+        }
         socket.removeListener("secureConnect", handleConnect);
         socket.removeListener("error", handleError);
       };
@@ -1202,7 +1215,7 @@ export class EppClient extends EventEmitter {
       const processingResult = await this._processIncomingXml(xml);
 
       if (processingResult instanceof Error) {
-        this.emit("error", processingResult);
+        this._emitError(processingResult);
       }
     }
   }
@@ -1286,11 +1299,19 @@ export class EppClient extends EventEmitter {
 
   private _handleSocketError(error: Error): void {
     const normalized = normalizeError(error, "Socket error encountered.");
-    this.emit("error", normalized);
+    this._emitError(normalized);
     this._resolveAll(normalized);
 
     if (this._socket && !this._socket.destroyed) {
       this._socket.destroy(normalized);
+    }
+  }
+
+  // EventEmitter throws an "error" event nobody listens for, which here would crash the host process
+  // from a socket callback; the failure already reaches pending commands as their resolved Error.
+  private _emitError(error: Error): void {
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", error);
     }
   }
 

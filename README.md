@@ -127,7 +127,7 @@ new EppClientConfig(options)
 | `host` | `string` | `''` | Fully qualified EPP server hostname. |
 | `port` | `number` | `700` | TCP port to connect to. |
 | `rejectUnauthorized` | `boolean` | `false` | Set to `true` to validate TLS certificates. |
-| `defaultTimeout` | `number` | `10000` | Default timeout in milliseconds for commands. |
+| `defaultTimeout` | `number` | `60000` | Timeout in milliseconds for connecting (TCP + TLS handshake) and for each command. `0` disables it. |
 
 `EppClientConfig#validate()` returns `null` when the configuration is usable or an `Error` describing the first issue. Use `EppClient#configure()` to produce a new configuration instance with updated values.
 
@@ -241,7 +241,7 @@ The client extends `EventEmitter` and emits:
 
 - `connect` – when the TLS session is established.
 - `close` – when the connection closes. Receives an `Error` describing the reason.
-- `error` – emitted for socket issues, XML parse failures and EPP error responses without a matching transaction.
+- `error` – emitted for socket issues, XML parse failures and EPP error responses without a matching transaction (such as a late reply to a command that already timed out). Only emitted when a listener is attached, so an unhandled `error` never crashes the process; the failure still reaches any pending command as its resolved `Error`.
 - `greeting` – fired when the registry sends its greeting banner.
 - `message` – emitted for every parsed message prior to specific handling.
 - `response` – emitted when a response cannot be matched to a pending command.
